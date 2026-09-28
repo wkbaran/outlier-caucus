@@ -60,17 +60,17 @@ That fetches new filings, reruns the analysis, regenerates the site, syncs `outp
 
 ## Daily run on Windows
 
-`run-and-publish.ps1` runs `report:html --publish --skip-unchanged` and logs to `logs\congress-trades-YYYY-MM-DD.log`. Filings are only posted on business days, so schedule it Monday to Friday. In PowerShell as Administrator, adjusting the path and time:
+`run-and-publish.ps1` runs `report:html --publish --skip-unchanged` and logs to `logs\outlier-caucus-YYYY-MM-DD.log`. Filings are only posted on business days, so schedule it Monday to Friday. In PowerShell as Administrator, adjusting the path and time:
 
 ```powershell
 $action = New-ScheduledTaskAction `
   -Execute "powershell.exe" `
-  -Argument '-NonInteractive -ExecutionPolicy Bypass -File "C:\path\to\uniquetrades-congress\run-and-publish.ps1"' `
-  -WorkingDirectory "C:\path\to\uniquetrades-congress"
+  -Argument '-NonInteractive -ExecutionPolicy Bypass -File "C:\path\to\outlier-caucus\run-and-publish.ps1"' `
+  -WorkingDirectory "C:\path\to\outlier-caucus"
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "7:00AM"
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
 
-Register-ScheduledTask -TaskName "Congress Trades - Daily Report" `
+Register-ScheduledTask -TaskName "Outlier Caucus - Daily Report" `
   -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest
 ```
 
@@ -82,8 +82,8 @@ Register-ScheduledTask -TaskName "Congress Trades - Daily Report" `
 
 ```bash
 docker compose -f docker/compose.yaml build
-docker compose -f docker/compose.yaml run --rm congress-trades                       # fetch, OCR, report, publish
-docker compose -f docker/compose.yaml run --rm congress-trades ocr:catchup --limit 5  # any other command
+docker compose -f docker/compose.yaml run --rm outlier-caucus                       # fetch, OCR, report, publish
+docker compose -f docker/compose.yaml run --rm outlier-caucus ocr:catchup --limit 5  # any other command
 ```
 
 - **Settings** come from the repo's `.env` if there is one.
@@ -92,14 +92,14 @@ docker compose -f docker/compose.yaml run --rm congress-trades ocr:catchup --lim
 
 ```bash
 OLLAMA_URL=https://ollama.example.com OLLAMA_API_KEY=secret \
-  docker compose -f docker/compose.yaml run --rm congress-trades
+  docker compose -f docker/compose.yaml run --rm outlier-caucus
 ```
 
 Without compose:
 
 ```bash
-docker build -f docker/Dockerfile -t uniquetrades-congress .
+docker build -f docker/Dockerfile -t outlier-caucus .
 docker run --rm --env-file .env -e OLLAMA_URL=http://host.docker.internal:11434 \
   -v "$PWD/data:/app/data" -v "$PWD/reports:/app/reports" -v "$PWD/output:/app/output" -v "$PWD/logs:/app/logs" \
-  uniquetrades-congress report:html --skip-unchanged
+  outlier-caucus report:html --skip-unchanged
 ```

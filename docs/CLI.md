@@ -1,6 +1,6 @@
 # CLI
 
-Run commands with `node dist/index.js <command>` after `npm run build`, or `npm run dev -- <command>` to run from source. `npm link` installs a `congress-trades` command so you can drop the `node dist/index.js`. Every command takes `--help`.
+Run commands with `node dist/index.js <command>` after `npm run build`, or `npm run dev -- <command>` to run from source. `npm link` installs an `outlier-caucus` command so you can drop the `node dist/index.js`. Every command takes `--help`.
 
 Settings come from environment variables; `node --env-file=.env` loads them from a file. `.env.example` lists them all.
 

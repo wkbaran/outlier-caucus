@@ -1,13 +1,13 @@
-# Run from the repo root:  docker compose -f docker/compose.yaml run --rm congress-trades
+# Run from the repo root:  docker compose -f docker/compose.yaml run --rm outlier-caucus
 # Settings come from ../.env (optional). OLLAMA_URL / OLLAMA_API_KEY are taken from the
 # shell or docker/.env instead and override ../.env, which usually points at localhost for
 # native runs, which is unreachable from inside the container.
 services:
-  congress-trades:
+  outlier-caucus:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: uniquetrades-congress
+    image: outlier-caucus
     env_file:
       - path: ../.env
         required: false

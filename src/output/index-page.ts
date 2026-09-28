@@ -180,7 +180,7 @@ export function buildIndexPage(entries: ReportManifestEntry[]): string {
     </li>`;
   });
 
-  const emptyMsg = `<p class="empty-msg">No reports yet. Run <code>congress-trades report:html</code> to generate the first one.</p>`;
+  const emptyMsg = `<p class="empty-msg">No reports yet. Run <code>outlier-caucus report:html</code> to generate the first one.</p>`;
   const latest = entries[0];
 
   return `<!DOCTYPE html>
@@ -188,7 +188,7 @@ ${HTML_OPEN}
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Congress trades</title>
+  <title>Outlier Caucus</title>
   ${themeHead(INDEX_CSS)}
 </head>
 <body>
@@ -230,7 +230,7 @@ ${HTML_OPEN}
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Congress trades</title>
+  <title>Outlier Caucus</title>
   <meta http-equiv="refresh" content="0; url=${href}">
   <link rel="canonical" href="${href}">
   <script>location.replace(${JSON.stringify(target).replace(/</g, "\\u003c")});</script>

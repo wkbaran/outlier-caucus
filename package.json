@@ -1,11 +1,11 @@
 {
-  "name": "uniquetrades-congress",
+  "name": "outlier-caucus",
   "version": "1.0.0",
-  "description": "CLI tool to identify unique trades made by US Congressmen",
+  "description": "Scores stock trades disclosed by members of Congress for how unusual they are",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "congress-trades": "./dist/index.js"
+    "outlier-caucus": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

@@ -29,7 +29,7 @@ export class HouseDataUnavailableError extends Error {
   }
 }
 
-const USER_AGENT = "uniquetrades-congress/1.0 (bill.baran@gmail.com)";
+const USER_AGENT = "outlier-caucus/1.0 (bill.baran@gmail.com)";
 
 // ── Senate schema ──────────────────────────────────────────────────────────
 

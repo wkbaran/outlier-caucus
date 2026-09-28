@@ -321,7 +321,7 @@ function escAttr(s: string): string {
 /** The masthead: brand (links to the archive), a middle slot, and the light/dark switch. */
 export function siteHeader(homeHref: string, middle = ""): string {
   return `<header class="wrap top">
-  <a class="brand site-brand" href="${escAttr(homeHref)}">Congress trades</a>
+  <a class="brand site-brand" href="${escAttr(homeHref)}">Outlier Caucus</a>
   ${middle}
   <span class="spacer"></span>
   <button class="theme-btn" id="theme-btn" type="button">Light mode</button>

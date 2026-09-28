@@ -1,9 +1,9 @@
-# uniquetrades-congress: generate report then publish
+# outlier-caucus: generate report then publish
 # Designed for use with Windows Task Scheduler
 
 $ProjectDir = $PSScriptRoot
 $LogDir = "$ProjectDir\logs"
-$LogFile = "$LogDir\congress-trades-$(Get-Date -Format 'yyyy-MM-dd').log"
+$LogFile = "$LogDir\outlier-caucus-$(Get-Date -Format 'yyyy-MM-dd').log"
 $NodeExe = "node"
 
 # Decode native command output (node's emoji) as UTF-8 instead of the OEM codepage

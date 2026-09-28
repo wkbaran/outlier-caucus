@@ -456,7 +456,7 @@ export const reportHtmlCommand = new Command("report:html")
       } else {
         console.log(
           "\nTip: add --publish to sync to S3, or run:\n" +
-          "  congress-trades report:html --publish --bucket <your-bucket>"
+          "  outlier-caucus report:html --publish --bucket <your-bucket>"
         );
       }
 

@@ -36,7 +36,7 @@ const REVIEW_FILE = "unparseable-filings.json";
 export const LOOKBACK_DAYS = 30;
 
 const USER_AGENT =
-  "uniquetrades-congress/1.0 (bill.baran@gmail.com) government-data-scraper";
+  "outlier-caucus/1.0 (bill.baran@gmail.com) government-data-scraper";
 
 // ── Run report ─────────────────────────────────────────────────────────────
 export interface ScrapeRunReport {

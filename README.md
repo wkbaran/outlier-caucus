@@ -1,6 +1,6 @@
 <div align="center">
 
-# Congress Trades
+# Outlier Caucus
 
 **Which stock trades by members of Congress are actually unusual?**
 

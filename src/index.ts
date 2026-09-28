@@ -28,8 +28,8 @@ if (process.env.LOG_TO_STDOUT) {
 const program = new Command();
 
 program
-  .name("congress-trades")
-  .description("CLI tool to identify unique trades made by US Congress members")
+  .name("outlier-caucus")
+  .description("Scores stock trades disclosed by members of Congress for how unusual they are")
   .version("1.0.0");
 
 // Register commands

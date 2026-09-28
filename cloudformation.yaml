@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Congress Trades — static website hosting.
+  Outlier Caucus — static website hosting.
   S3 bucket (private) + CloudFront (HTTPS) + IAM publish user.
   IMPORTANT: Deploy this stack in us-east-1. ACM certificates used by
   CloudFront must live in us-east-1 regardless of where your bucket is.
@@ -10,7 +10,7 @@ Parameters:
   BucketName:
     Type: String
     Description: >
-      S3 bucket name (must be globally unique, e.g. congress-trades-yourname).
+      S3 bucket name (must be globally unique, e.g. outlier-caucus-yourname).
 
   CustomDomain:
     Type: String

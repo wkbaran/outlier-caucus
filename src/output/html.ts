@@ -856,7 +856,7 @@ ${HTML_OPEN}
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Congress trades, ${esc(dateLabel)}</title>
+  <title>Outlier Caucus, ${esc(dateLabel)}</title>
   ${themeHead(REPORT_CSS, "../")}
 </head>
 <body>
