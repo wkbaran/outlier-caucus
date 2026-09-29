@@ -124,7 +124,7 @@ async function recordForReview(chamber: "House" | "Senate", found: ReviewCandida
 }
 
 function log(chamber: string, msg: string) {
-  const ts = new Date().toISOString().slice(11, 19);
+  const ts = new Date().toTimeString().slice(0, 8); // local time, so it follows TZ
   console.log(`  [${ts}] [${chamber}] ${msg}`);
 }
 
