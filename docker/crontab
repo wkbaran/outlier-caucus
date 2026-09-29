@@ -1,0 +1,3 @@
+# Times are America/Denver (TZ is set in the image), so DST is handled automatically.
+# Filings are only posted on business days. Output goes to `docker logs`.
+0 7  * * 1-5  node /app/dist/index.js report:html --publish --skip-unchanged

@@ -10,3 +10,4 @@ test-results
 .env*
 .git
 .claude
+**/.env*

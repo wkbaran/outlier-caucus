@@ -78,28 +78,50 @@ Register-ScheduledTask -TaskName "Outlier Caucus - Daily Report" `
 
 ## Docker
 
-`docker/Dockerfile` builds the CLI into a Node 22 image, and `docker/compose.yaml` runs it the same way as `run-and-publish.ps1`. From the repo root:
+`docker/Dockerfile` builds the CLI into a Node 22 image that runs the daily schedule itself: [supercronic](https://github.com/aptible/supercronic) starts `report:html --publish --skip-unchanged` at 07:00 Mountain, Monday to Friday, as set in `docker/crontab`. The container stays up (`restart: unless-stopped`), so `docker ps` shows it and `docker logs` has every run. To change the schedule, edit `docker/crontab` and rebuild. From the repo root:
 
 ```bash
-docker compose -f docker/compose.yaml build
-docker compose -f docker/compose.yaml run --rm outlier-caucus                       # fetch, OCR, report, publish
-docker compose -f docker/compose.yaml run --rm outlier-caucus ocr:catchup --limit 5  # any other command
+docker compose -f docker/compose.yaml up -d --build      # build and start the scheduled container
+docker logs -f outlier-caucus                            # follow the logs
+docker exec outlier-caucus node dist/index.js report:html --publish --skip-unchanged   # run it now
+docker exec outlier-caucus node dist/index.js ocr:catchup --limit 5                    # any other command
 ```
 
-- **Settings** come from the repo's `.env` if there is one.
+- **Settings** come from the repo's `.env` if there is one, then `docker/.env` if there is one, which wins. Compose reads both on the machine you run it from.
 - **Data** persists across runs: `data/`, `reports/`, `output/`, `formatted-reports/` and `logs/` are mounted from the repo, so the container and a native install share the same cache.
 - **Ollama**: `OLLAMA_URL` defaults to `http://host.docker.internal:11434`, the Ollama on the Docker host (this works on Linux too). Set `OLLAMA_URL` and `OLLAMA_API_KEY` in your shell or in `docker/.env`, not the repo's `.env`. Compose gives those priority because the repo's `.env` usually points at `localhost`, which inside a container is the container itself.
-
-```bash
-OLLAMA_URL=https://ollama.example.com OLLAMA_API_KEY=secret \
-  docker compose -f docker/compose.yaml run --rm outlier-caucus
-```
+- A run missed while the container was stopped isn't made up. The next one fetches everything since the last.
 
 Without compose:
 
 ```bash
 docker build -f docker/Dockerfile -t outlier-caucus .
-docker run --rm --env-file .env -e OLLAMA_URL=http://host.docker.internal:11434 \
-  -v "$PWD/data:/app/data" -v "$PWD/reports:/app/reports" -v "$PWD/output:/app/output" -v "$PWD/logs:/app/logs" \
-  outlier-caucus report:html --skip-unchanged
+docker run -d --name outlier-caucus --restart unless-stopped --env-file .env \
+  -e OLLAMA_URL=http://host.docker.internal:11434 \
+  -v "$PWD/data:/app/data" -v "$PWD/reports:/app/reports" -v "$PWD/output:/app/output" \
+  -v "$PWD/formatted-reports:/app/formatted-reports" -v "$PWD/logs:/app/logs" \
+  outlier-caucus
 ```
+
+### Deploying to a remote Docker host
+
+Compose can drive a remote daemon, so nothing but the state directory has to exist on the host. From the repo root:
+
+```bash
+export DOCKER_HOST=ssh://user@host
+docker compose -f docker/compose.yaml up -d --build      # builds on the host, then starts the container
+docker compose -f docker/compose.yaml logs -f
+```
+
+1. **Copy the state to the host first.** Put `data/`, `output/`, `reports/` and `logs/` in one directory there. `output/web` matters most: `--publish` deletes bucket objects that aren't in it, so a host that starts empty would wipe the archive on its first publish. Before the first publish, compare `output/web` with the bucket (`aws s3 ls --recursive` against `find output/web -type f`) and expect nothing to be deleted. Of `reports/` only the newest file is needed, for `--render-only`.
+2. **Write `docker/.env` on the machine you deploy from** (it's gitignored). It holds the settings, including secrets, and where the state lives on the host:
+
+   ```
+   STATE_DIR=/var/home/core/outlier-caucus
+   OLLAMA_URL=http://<ollama-host>:11434
+   SEC_USER_AGENT=Your Name you@example.com
+   S3_BUCKET=...  AWS_REGION=...  CLOUDFRONT_DISTRIBUTION_ID=...  AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...   # one per line
+   ```
+
+   `STATE_DIR` must be an absolute path on the host. The container uses the host's DNS, so a LAN name works for `OLLAMA_URL`. Use the publish-only key from the CloudFormation stack, not an admin profile.
+3. Run the `docker compose ... up -d --build` above. On SELinux hosts such as Fedora CoreOS the `:z` on the volumes is needed, and is already in the compose file.

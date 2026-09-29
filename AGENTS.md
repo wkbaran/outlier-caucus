@@ -1,0 +1,13 @@
+# Notes for agents
+
+Things that are easy to get wrong in this project.
+
+- **The scheduled job's state lives outside git.** `data/`, `reports/`, `output/`, `formatted-reports/`, `logs/` and `.env` are all gitignored. A fresh clone has none of them, so it would re-download a year of filings and re-OCR every scanned page (about 100 s each). Copy the state along with the code when moving the job.
+- **`--publish` mirrors `output/web` to the bucket and deletes anything not in it.** Never publish from a checkout whose `output/web` is empty or stale. Diff it against the bucket first.
+- **`--skip-unchanged` compares against `data/trades.json`.** A run that fetches new trades without `--publish` updates `trades.json`, so later scheduled runs see "nothing new" and skip publishing. Test runs should use the real flags or `--no-fetch-trades`.
+- **The project was renamed twice**, and the AWS stack, IAM user and log files still carry the old names (`congress-trades`, `congress-trades-publisher-…`). A scheduled task set up before a rename keeps pointing at the old checkout, which may be the one holding the real state, not the current clone.
+- **Publish with the publish-only key from `cloudformation.yaml`** (list, put and delete on the one bucket, plus CloudFront invalidation), never an admin profile. Don't copy an admin `~/.aws` profile onto a server.
+- **The daily job runs as one long-running compose container** (`outlier-caucus`), with supercronic inside the image running `docker/crontab` (07:00 America/Denver, Mon to Fri). There is no host cron or systemd timer. Deploy from your own machine with `DOCKER_HOST=ssh://<user>@<host> docker compose -f docker/compose.yaml up -d --build`. Compose reads `docker/.env` on the client (gitignored; holds the secrets and `STATE_DIR`), and bind paths are resolved on the host, so `STATE_DIR` must be an absolute path there. The compose file pins `name: outlier-caucus` so the project isn't called `docker`. Logs: `docker logs outlier-caucus`; one-offs: `docker exec outlier-caucus node dist/index.js <command>`. See "Docker" in `docs/PUBLISHING.md`.
+- **Never `docker image prune -a` on the deploy host.** The image has no running container between builds, so it would count as unused. Old untagged images and build cache are what fill the disk; plain `docker image prune` and `docker builder prune` are safe.
+- **On SELinux hosts (Fedora CoreOS) bind mounts need `:z`**, which the compose file already has. The host may not have the compose plugin; run compose from elsewhere against `DOCKER_HOST`.
+- **OCR runs on the Ollama at `OLLAMA_URL`** and needs `qwen3.6:27b` installed there. Ollama on a Windows desktop may refuse connections from WSL, so test from the Docker host or a container.

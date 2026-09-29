@@ -1,15 +1,30 @@
-# Run from the repo root:  docker compose -f docker/compose.yaml run --rm outlier-caucus
-# Settings come from ../.env (optional). OLLAMA_URL / OLLAMA_API_KEY are taken from the
-# shell or docker/.env instead and override ../.env, which usually points at localhost for
-# native runs, which is unreachable from inside the container.
+# Run from the repo root:  docker compose -f docker/compose.yaml up -d --build
+# Runs the daily schedule (docker/crontab) until stopped. One-off commands:
+#   docker compose -f docker/compose.yaml exec outlier-caucus node dist/index.js ocr:catchup --limit 5
+#
+# Settings: ../.env (optional, for native runs) then docker/.env (optional, wins). Compose
+# reads both on the machine running it, so with DOCKER_HOST=ssh://user@host they need not
+# exist on the host. OLLAMA_URL / OLLAMA_API_KEY are taken from the shell or docker/.env
+# instead and override ../.env, which usually points at localhost for native runs, which is
+# unreachable from inside the container.
+#
+# STATE_DIR (docker/.env or shell) is where data/, reports/, output/, formatted-reports/ and
+# logs/ live. It defaults to the repo, so a local run shares the native install's cache. For a
+# remote host set it to an absolute path on that host, e.g. STATE_DIR=/var/home/core/outlier-caucus
+name: outlier-caucus
+
 services:
   outlier-caucus:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     image: outlier-caucus
+    container_name: outlier-caucus
+    restart: unless-stopped
     env_file:
       - path: ../.env
+        required: false
+      - path: .env
         required: false
     environment:
       # LLM (Ollama) used to OCR scanned filings. Defaults to Ollama on the Docker host.
@@ -20,9 +35,9 @@ services:
       # Makes host.docker.internal resolve on Linux too
       - "host.docker.internal:host-gateway"
     volumes:
-      - ../data:/app/data
-      - ../reports:/app/reports
-      - ../output:/app/output
-      - ../formatted-reports:/app/formatted-reports
-      - ../logs:/app/logs
-    command: ["report:html", "--publish", "--skip-unchanged"]
+      # :z relabels for SELinux hosts (Fedora CoreOS); other hosts ignore it
+      - ${STATE_DIR:-..}/data:/app/data:z
+      - ${STATE_DIR:-..}/reports:/app/reports:z
+      - ${STATE_DIR:-..}/output:/app/output:z
+      - ${STATE_DIR:-..}/formatted-reports:/app/formatted-reports:z
+      - ${STATE_DIR:-..}/logs:/app/logs:z
