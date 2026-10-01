@@ -17,6 +17,15 @@ const dir = buildSymbolDirectory(
     { ticker: "IBM", cik: 51143, title: "INTERNATIONAL BUSINESS MACHINES CORP" },
     { ticker: "XOM", cik: 34088, title: "EXXON MOBIL CORP" },
     { ticker: "TJX", cik: 109198, title: "TJX COMPANIES INC /DE/" },
+    { ticker: "UNH", cik: 731766, title: "UNITEDHEALTH GROUP INC" },
+    { ticker: "SCHW", cik: 316709, title: "SCHWAB CHARLES CORP" },
+    { ticker: "USB", cik: 36104, title: "US BANCORP DE" },
+    { ticker: "TBBK", cik: 1295401, title: "Bancorp, Inc." },
+    { ticker: "GLW", cik: 24741, title: "CORNING INC /NY" },
+    { ticker: "VZ", cik: 732712, title: "VERIZON COMMUNICATIONS INC" },
+    { ticker: "AVD", cik: 5981, title: "AMERICAN VANGUARD CORP" },
+    { ticker: "IBIT", cik: 1980994, title: "iShares Bitcoin Trust ETF" },
+    { ticker: "BR", cik: 1383312, title: "Broadridge Financial Solutions, Inc." },
   ],
   ["IVV", "VOO"]
 );
@@ -70,4 +79,19 @@ test("re-checking a trade starts from the ticker as read", () => {
   const rejected = applyTickerCheck({ assetDescription: "TULSA OKLA UTIL REV BDS", symbol: "GS", source: "ocr" }, dir);
   expect(rejected).not.toHaveProperty("symbol");
   expect(applyTickerCheck(rejected, dir)).toEqual(rejected);
+});
+
+test("statement quirks still find the company", () => {
+  expect(findByName(dir, "UNITEDHEALTH GROUP INCORPORATE CMN")?.ticker).toBe("UNH");
+  expect(findByName(dir, "BROADRIDGE FINANCIAL SOLUTIONS IN CMN")?.ticker).toBe("BR");
+  expect(findByName(dir, "CHARLES SCHWAB CORPORATION CMN")?.ticker).toBe("SCHW");
+  expect(findByName(dir, "U.S. BANCORP CMN")?.ticker).toBe("USB");
+  expect(findByName(dir, "CORNING INCORPORATED CMN")?.ticker).toBe("GLW");
+});
+
+test("bonds, notes and funds don't take a company's stock ticker", () => {
+  expect(findByName(dir, "VERIZON COMMUNICATIONS, INC. 4.329% 09/21/2028 USD")).toBeUndefined();
+  expect(findByName(dir, "VERIZON COMMUNICATIONS INC HYBRID PERPETUAL")).toBeUndefined();
+  expect(findByName(dir, "VANGUARD TOTAL STOCK MARKET INDEX FD ADMIRAL SHARES")).toBeUndefined();
+  expect(findByName(dir, "ISHARES BITCOIN TRUST ETF")?.ticker).toBe("IBIT");
 });

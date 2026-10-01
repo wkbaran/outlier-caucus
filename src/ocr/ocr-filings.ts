@@ -4,9 +4,9 @@
  * rows into the trade data. Shared by the daily run and the ocr:catchup command.
  */
 import * as fs from "fs/promises";
-import { loadSymbolDirectory, checkTicker, type SymbolDirectory } from "../data/sec-symbols.js";
 import * as path from "path";
 import type { FMPTrade } from "../types/index.js";
+import { loadSymbolDirectory, checkTicker, type SymbolDirectory } from "../data/sec-symbols.js";
 import { loadData, saveData } from "../utils/storage.js";
 import { acceptSenatEfdTerms, fetchWithUA, splitMemberName, type ReviewFiling } from "../data/government-provider.js";
 import { pagesFromDocument, rotationCandidates, type PageSource, type RenderedPage, type Rotation } from "./render.js";
@@ -324,15 +324,91 @@ export function mergeOcrTrades(tradeData: StoredTrades, outcome: FilingOcrOutcom
   return true;
 }
 
+export const TICKER_OVERRIDES_FILE = path.join("data", "ticker-overrides.json");
+
+/** Asset name as written → ticker, or "" for none. Keys compare case- and spacing-insensitively. */
+export type TickerOverrides = Map<string, string>;
+
+export const overrideKey = (asset: string) => asset.replace(/\s+/g, " ").trim().toUpperCase();
+
 /**
- * Check an OCR'd trade's ticker against the SEC symbol lists and its asset name.
- * Re-running starts from the ticker as originally read, so it gives the same answer.
+ * Hand-set tickers from data/ticker-overrides.json, a plain JSON object such as
+ * { "APLOVIN CORPORATION CMN CLASS A": "APP", "MH Built to Last LLC": "" }.
  */
-export function applyTickerCheck(trade: FMPTrade, dir: SymbolDirectory): FMPTrade {
+export async function loadTickerOverrides(file = TICKER_OVERRIDES_FILE): Promise<TickerOverrides> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf-8");
+  } catch {
+    return new Map();
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return new Map(Object.entries(parsed).map(([asset, ticker]) => [overrideKey(asset), String(ticker ?? "").trim().toUpperCase()]));
+  } catch (err) {
+    console.warn(`⚠️  Ignoring ${file}: ${(err as Error).message}`);
+    return new Map();
+  }
+}
+
+/**
+ * Check an OCR'd trade's ticker against a hand-set override, then the SEC symbol
+ * lists and its asset name. Re-running starts from the ticker as originally read,
+ * so it gives the same answer.
+ */
+export function applyTickerCheck(trade: FMPTrade, dir: SymbolDirectory, overrides: TickerOverrides = new Map()): FMPTrade {
   const read = trade.ocrTicker !== undefined ? trade.ocrTicker || undefined : trade.symbol;
-  const { symbol, check } = checkTicker(dir, trade.assetDescription ?? "", read);
+  const manual = overrides.get(overrideKey(trade.assetDescription ?? ""));
+  const { symbol, check } = manual !== undefined
+    ? { symbol: manual || undefined, check: "manual" as const }
+    : checkTicker(dir, trade.assetDescription ?? "", read);
   const { symbol: _old, tickerCheck: _check, ...rest } = trade;
   return { ...rest, ...(symbol ? { symbol } : {}), ...(check ? { tickerCheck: check } : {}), ocrTicker: read ?? "" };
+}
+
+export interface StoredTickerCheck {
+  data: StoredTrades;
+  checked: number;
+  /** "check: old → new  asset" → how many trades */
+  changes: Map<string, number>;
+  counts: Record<string, number>;
+}
+
+/** Re-check every stored OCR'd trade's ticker. Pure: returns new data without saving it. */
+export function checkStoredTickers(data: StoredTrades, dir: SymbolDirectory, overrides: TickerOverrides): StoredTickerCheck {
+  const changes = new Map<string, number>();
+  const counts: Record<string, number> = {};
+  let checked = 0;
+  const recheck = (trades: FMPTrade[]) => trades.map((trade) => {
+    if (trade.source !== "ocr") return trade;
+    checked++;
+    const next = applyTickerCheck(trade, dir, overrides);
+    const check = next.tickerCheck ?? "no ticker";
+    counts[check] = (counts[check] ?? 0) + 1;
+    if (next.symbol !== trade.symbol) {
+      const line = `${check}: ${trade.symbol ?? "none"} → ${next.symbol ?? "none"}  ${trade.assetDescription ?? ""}`;
+      changes.set(line, (changes.get(line) ?? 0) + 1);
+    }
+    return next;
+  });
+  return { data: { senateTrades: recheck(data.senateTrades), houseTrades: recheck(data.houseTrades) }, checked, changes, counts };
+}
+
+/**
+ * Re-check stored OCR'd tickers and save any changes, so new overrides and SEC list
+ * updates reach the next report. Returns the trade data, or null without SEC lists.
+ */
+export async function recheckStoredTickers(log: Log = (line) => console.log(line)): Promise<StoredTrades | null> {
+  const symbols = await loadSymbolDirectory();
+  const stored = await loadData<StoredTrades>(TRADES_FILE);
+  if (!symbols || !stored?.data) return null;
+  const result = checkStoredTickers(stored.data, symbols, await loadTickerOverrides());
+  const changed = [...result.changes.values()].reduce((a, b) => a + b, 0);
+  if (changed > 0) {
+    await saveData(TRADES_FILE, result.data);
+    log(`🔎 Ticker check: ${changed} OCR'd ticker${changed === 1 ? "" : "s"} changed`);
+  }
+  return result.data;
 }
 
 /** OCR one filing, merge its rows into trades.json, and record the outcome. */
@@ -343,7 +419,8 @@ export async function ocrAndMerge(
   const outcome = await ocrFiling(filing, opts);
   const symbols = await loadSymbolDirectory();
   if (symbols) {
-    outcome.trades = outcome.trades.map((t) => applyTickerCheck(t, symbols));
+    const overrides = await loadTickerOverrides();
+    outcome.trades = outcome.trades.map((t) => applyTickerCheck(t, symbols, overrides));
     for (const t of outcome.trades) {
       if (t.symbol !== (t.ocrTicker || undefined)) {
         opts.log(`    ticker ${t.tickerCheck}: ${t.ocrTicker || "none"} → ${t.symbol ?? "none"}  (${t.assetDescription})`);

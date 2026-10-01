@@ -3,6 +3,7 @@ import type { FMPTrade } from "../types/index.js";
 import type { UniquenessResult } from "../scoring/types.js";
 import { SENATE_COMMITTEE_TAXONOMY, HOUSE_COMMITTEE_TAXONOMY } from "../data/committee-sector-taxonomy.js";
 import { memberKey } from "./member-identity.js";
+import type { AttentionItem } from "./attention.js";
 import { HTML_OPEN, THEME_JS, themeHead, siteHeader, shortDate, shortAmount, tidyAsset } from "./theme.js";
 
 /** Returns the member page filename for a trade's filer, or null if no page exists */
@@ -575,6 +576,23 @@ const REPORT_CSS = `
   .runs .d { font-size: 0.68rem; color: var(--muted); text-align: center; white-space: nowrap; }
   .runs-note { margin-top: 0.6rem; font-size: 0.85rem; color: var(--muted); max-width: 30rem; }
 
+  /* 5. Data to check */
+  .checks { border-top: 1px solid var(--line); padding: 2.5rem 0 2rem; }
+  .checks h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem; }
+  .checks-intro, .checks-more { color: var(--sub); font-size: 0.9rem; max-width: 46rem; }
+  .checks-more { margin-top: 0.8rem; }
+  .check-list { list-style: none; padding: 0; margin-top: 1rem; }
+  .check-list > li { border-bottom: 1px solid var(--line); }
+  .check-list summary { cursor: pointer; padding: 0.65rem 0; display: flex; gap: 0.6rem; align-items: baseline; }
+  .check-list summary .check-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .check-list summary .n { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+  .check-new { font-size: 0.72rem; font-weight: 600; color: var(--signal); border: 1px solid var(--signal); border-radius: 999px; padding: 0 0.45rem; }
+  .check-list details p, .check-list .fix { font-size: 0.9rem; max-width: 46rem; color: var(--sub); }
+  .check-list .fix { margin: 0.5rem 0 1rem; padding-left: 1.2rem; }
+  .check-list .fix li { margin-bottom: 0.3rem; }
+  .check-list code { font-size: 0.82rem; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; overflow-wrap: anywhere; }
+  .fresh-check { margin-top: 1rem; font-size: 0.9rem; }
+
   @media (max-width: 860px) {
     .pick-main { grid-template-columns: 4.5rem minmax(0, 1fr) 2rem; }
     .score b { font-size: 1.4rem; }
@@ -732,6 +750,36 @@ export interface HtmlReportOptions {
   previousRunLabel?: string;
   /** Every run, newest first, including this one: feeds the picker and the chart. */
   runs?: ReportRunLink[];
+  /** What the run couldn't resolve, with how to fix it */
+  attention?: AttentionItem[];
+}
+
+const ATTENTION_SHOWN = 12;
+
+/** Escape, then show `backticked` commands, paths and JSON as code. */
+const withCode = (text: string) => esc(text).replace(/`([^`]+)`/g, "<code>$1</code>");
+
+/** Things the run couldn't resolve, each with how to fix it; nothing when there are none. */
+function attentionHtml(items: AttentionItem[]): string {
+  if (!items.length) return "";
+  const shown = items.slice(0, ATTENTION_SHOWN);
+  return `
+  <section class="checks" id="checks" aria-labelledby="checks-h">
+    <div class="wrap">
+      <h2 id="checks-h">Data to check</h2>
+      <p class="checks-intro">${items.length === 1 ? "One thing" : `${items.length} things`} this run couldn't resolve on its own${items.some((i) => i.inThisReport) ? ", those touching this report's new trades first" : ""}. Each says how to fix it before the next run.</p>
+      <ul class="check-list">${shown.map((item) => `
+        <li>
+          <details>
+            <summary>${item.inThisReport ? '<span class="check-new">New</span> ' : ""}<span class="check-title">${esc(item.title)}</span>${item.trades ? `<span class="n">${item.trades} trade${item.trades === 1 ? "" : "s"}</span>` : ""}</summary>
+            <p>${esc(item.detail)}${item.filing ? ` <a href="${esc(item.filing)}" target="_blank" rel="noopener">Filing</a>` : ""}</p>
+            <ol class="fix">${item.fix.map((step) => `<li>${withCode(step)}</li>`).join("")}</ol>
+          </details>
+        </li>`).join("")}
+      </ul>
+      ${items.length > shown.length ? `<p class="checks-more">And ${items.length - shown.length} more, listed with their fixes in <a href="../latest.json">latest.json</a> and the run log.</p>` : ""}
+    </div>
+  </section>`;
 }
 
 const NUMBER_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
@@ -811,6 +859,7 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
     isNewlyDisclosed = () => false,
     previousRunLabel,
     runs = [],
+    attention = [],
   } = opts;
 
   const scoreLookup = buildScoreLookup(report);
@@ -867,6 +916,9 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
       <p class="runs-note">Each bar is one report. Taller means more trades were disclosed since the report before it. Select one to open it.</p>
     </div>` : "";
 
+  const checksHtml = attentionHtml(attention);
+  const newChecks = attention.filter((a) => a.inThisReport).length;
+
   const parties = [
     partyPageUrls?.republican ? `<li><a href="${esc(partyPageUrls.republican)}"><span>Republicans</span><span class="n"></span></a></li>` : "",
     partyPageUrls?.democrat ? `<li><a href="${esc(partyPageUrls.democrat)}"><span>Democrats</span><span class="n"></span></a></li>` : "",
@@ -895,6 +947,7 @@ ${siteHeader(indexUrl ?? "#", picker)}
   <section class="fresh-band" aria-labelledby="fresh-h">
     <div class="wrap fresh">
       ${freshHtml(newly, previousRunLabel, memberLink)}
+      ${newChecks ? `<p class="fresh-check"><a href="#checks">${newChecks === 1 ? "One thing" : `${numberWord(newChecks)} things`} in these new trades could not be confirmed</a></p>` : ""}
     </div>
   </section>
 
@@ -960,6 +1013,7 @@ ${siteHeader(indexUrl ?? "#", picker)}
       ${chart}
     </div>
   </section>
+${checksHtml}
 </main>
 
 <footer>

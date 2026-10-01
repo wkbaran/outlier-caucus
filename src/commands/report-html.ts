@@ -10,7 +10,9 @@ import { createFMPClient } from "../services/fmp-client.js";
 import { FMPTradeSource } from "../services/fmp-trade-source.js";
 import { createGovernmentProvider } from "../data/government-provider.js";
 import { createEdgarProvider } from "../data/edgar-provider.js";
-import { runDailyOcr } from "../ocr/ocr-filings.js";
+import { filingKey, loadOcrResults, loadScannedFilings, recheckStoredTickers, runDailyOcr } from "../ocr/ocr-filings.js";
+import { loadSymbolDirectory } from "../data/sec-symbols.js";
+import { buildAttention } from "../output/attention.js";
 
 function createTradeProvider() {
   if (process.env.DATA_SOURCE === "fmp") {
@@ -219,6 +221,9 @@ export const reportHtmlCommand = new Command("report:html")
           console.log("Market data: cache-only (no API calls — using --no-fetch-trades)");
         }
 
+        // Apply new ticker overrides and SEC list updates to stored OCR'd trades
+        tradeData = (await recheckStoredTickers()) ?? tradeData;
+
         console.log("\nRunning analysis...");
         report = await analyzeTrades(
           tradeData.senateTrades,
@@ -282,6 +287,17 @@ export const reportHtmlCommand = new Command("report:html")
       const runMaxFiling = maxFilingDate(allTrades);
 
       const newlyDisclosed = allTrades.filter(isNewlyDisclosed);
+
+      // ── What this run couldn't resolve, with how to fix it ───────────────
+      const ocrResults = await loadOcrResults();
+      const attention = buildAttention({
+        trades: allTrades,
+        isNewlyDisclosed,
+        ocrResults,
+        pendingFilings: (await loadScannedFilings()).filter((f) => !ocrResults[filingKey(f)]),
+        tickerChecksOn: (await loadSymbolDirectory()) !== null,
+        reportDate: dateStr,
+      });
       console.log(
         hasPrevious
           ? `   Newly disclosed since the previous report: ${newlyDisclosed.length} trade${newlyDisclosed.length !== 1 ? "s" : ""}`
@@ -437,6 +453,7 @@ export const reportHtmlCommand = new Command("report:html")
         isNewlyDisclosed,
         previousRunLabel,
         runs,
+        attention,
       });
 
       await fs.writeFile(path.join(dateDir, reportFile), html, "utf-8");
@@ -456,6 +473,7 @@ export const reportHtmlCommand = new Command("report:html")
         resolveParty,
         memberLink,
         topWindowDays,
+        attention,
       }), null, 2);
       await fs.writeFile(path.join(dateDir, "brief.json"), brief, "utf-8");
       await fs.writeFile(path.join(webDir, "latest.json"), brief, "utf-8");
@@ -491,6 +509,15 @@ export const reportHtmlCommand = new Command("report:html")
           "\nTip: add --publish to sync to S3, or run:\n" +
           "  outlier-caucus report:html --publish --bucket <your-bucket>"
         );
+      }
+
+      if (attention.length) {
+        console.log(`\n⚠️  ${attention.length} thing${attention.length === 1 ? "" : "s"} to look into (also listed at the foot of the report and in latest.json):`);
+        for (const item of attention.slice(0, 10)) {
+          console.log(`  • ${item.title}${item.inThisReport ? " [in this report]" : ""}`);
+          for (const step of item.fix) console.log(`      ${step}`);
+        }
+        if (attention.length > 10) console.log(`  … ${attention.length - 10} more`);
       }
 
       console.log("\n✅ Done.");

@@ -30,6 +30,8 @@ export interface SymbolDirectory {
   funds: Set<string>;
   /** By normalized company name; more than one entry means the name is ambiguous */
   byName: Map<string, SecCompany[]>;
+  /** The same, with the words sorted: the SEC writes some names surname first ("SCHWAB CHARLES CORP") */
+  bySortedName: Map<string, SecCompany[]>;
 }
 
 /** How an OCR'd ticker held up against the SEC lists. */
@@ -38,6 +40,7 @@ export type TickerCheck =
   | "fund"           // a fund or ETF symbol (the SEC list has no names to compare)
   | "corrected"      // the read ticker was wrong or unknown; replaced by the one the name matches
   | "found-by-name"  // no ticker was read; found by the company name
+  | "manual"         // set by hand in data/ticker-overrides.json
   | "name-mismatch"  // a listed ticker for a differently named company, kept because the filing writes it
   | "rejected"       // a listed ticker for a differently named company that the filing never writes; dropped
   | "unknown-symbol"; // not a listed company or fund, and the name matched nothing
@@ -51,22 +54,46 @@ const NAME_NOISE = new Set([
   "ADR", "ADRS", "ADS", "UNIT", "UNITS", "NEW", "THE", "AND", "DEL", "DE",
   "INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "COMPANIES", "LTD", "LIMITED",
   "PLC", "LLC", "LP", "NV", "SA", "AG", "SE", "AS", "HOLDINGS", "HOLDING", "GROUP", "REGISTERED",
-  // Broker statements: "MICROSOFT CORPORATION CMN", "MASTERCARD INCORPORATED CL A"
-  "CMN", "COM", "CL",
+  // Broker statements: "MICROSOFT CORPORATION CMN", "MASTERCARD INCORPORATED CL A",
+  // "COMCAST CORPORATION CMN CLASS A VOTING", "INFOSYS LTD SPON ADR EACH REP 1 ORD SHS"
+  "CMN", "COM", "CL", "SPON", "SPONS", "UNSPONSORD", "SHS", "STK", "CAP", "ORD", "ORDS",
+  "VOTING", "VTG", "NON", "EACH", "REP", "EQUALS",
 ]);
 
 // Abbreviations broker statements use where the SEC spells the word out
-const NAME_ABBREVIATIONS: Record<string, string> = { INTL: "INTERNATIONAL", TR: "TRUST" };
+const NAME_ABBREVIATIONS: Record<string, string> = {
+  INTL: "INTERNATIONAL", TR: "TRUST", HLDG: "HOLDINGS", HLDGS: "HOLDINGS", COS: "COMPANIES",
+  MFG: "MANUFACTURING", SVCS: "SERVICES", SVC: "SERVICES", NATL: "NATIONAL", FINL: "FINANCIAL",
+};
+
+const NOISE_WORDS = [...NAME_NOISE];
 
 /** Significant words of a company or asset name: "Walmart Inc. - Common Stock [ST]" → ["WALMART"] */
 export function nameTokens(text: string): string[] {
-  return text
+  const words = text
     .toUpperCase()
-    .replace(/\([^)]*\)|\[[^\]]*\]|\/[A-Z]{2}\//g, " ")
+    .replace(/\([^)]*\)|\[[^\]]*\]|\/[A-Z]{2,3}\/?/g, " ")
+    .replace(/\bUSD\s?[\d.]+/g, " ")
+    // "S&P", "AT&T", "SS&C" are names, not two words
+    .replace(/\b([A-Z]{1,2})\s?&\s?([A-Z]{1,2})\b/g, "$1$2")
+    // "MOODY'S" is MOODYS; "O'REILLY" is O REILLY, as the SEC writes it
+    .replace(/'S\b/g, "S")
     .replace(/[^A-Z0-9]+/g, " ")
+    // Initials are one word: "U.S. BANCORP", "N V R INC", "A.O. SMITH"
+    .replace(/\b[A-Z](?: [A-Z]\b)+/g, (m) => m.replace(/ /g, ""))
+    .trim()
     .split(" ")
-    .map((w) => NAME_ABBREVIATIONS[w] ?? w)
-    .filter((w) => w.length > 1 && !NAME_NOISE.has(w));
+    .map((w) => NAME_ABBREVIATIONS[w] ?? w);
+  // Statements cut names off at a column width: "UNITEDHEALTH GROUP INCORPORATE",
+  // "TRANE TECHNOLOGIES PUBLIC LIMI". A last word that starts a legal-form word goes.
+  while (words.length > 1) {
+    const last = words[words.length - 1];
+    if (NAME_NOISE.has(last) || /^\d+$/.test(last) || last.length < 2) { words.pop(); continue; }
+    if (NOISE_WORDS.some((n) => n.length > last.length && n.startsWith(last))) { words.pop(); continue; }
+    if (last === "PUBLIC") { words.pop(); continue; } // "PUBLIC LIMITED COMPANY", cut short
+    break;
+  }
+  return words.filter((w) => w.length > 1 && !NAME_NOISE.has(w) && !/^\d+$/.test(w));
 }
 
 /**
@@ -85,25 +112,76 @@ export function namesMatch(asset: string, title: string): boolean {
 }
 
 export function buildSymbolDirectory(companies: SecCompany[], funds: string[]): SymbolDirectory {
-  const dir: SymbolDirectory = { companies: new Map(), funds: new Set(funds.map(secKey)), byName: new Map() };
+  const dir: SymbolDirectory = { companies: new Map(), funds: new Set(funds.map(secKey)), byName: new Map(), bySortedName: new Map() };
+  const add = (index: Map<string, SecCompany[]>, name: string, company: SecCompany) => {
+    const same = index.get(name) ?? [];
+    if (!same.some((c) => c.cik === company.cik)) index.set(name, [...same, company]);
+  };
   for (const company of companies) {
     const key = secKey(company.ticker);
     if (dir.companies.has(key)) continue;
     dir.companies.set(key, company);
-    const name = nameTokens(company.title).join("");
-    if (!name) continue;
+    const words = nameTokens(company.title);
+    if (!words.length) continue;
     // The SEC lists a company's main ticker first (GOOGL before GOOG, BRK-B before BRK-A),
     // so only the first ticker per company is kept for name lookups.
-    const same = dir.byName.get(name) ?? [];
-    if (!same.some((c) => c.cik === company.cik)) dir.byName.set(name, [...same, company]);
+    add(dir.byName, words.join(" "), company);
+    add(dir.bySortedName, [...words].sort().join(" "), company);
   }
   return dir;
 }
 
-/** The one listed company with exactly this name, if there is exactly one. */
+/** The single company in a list of candidates, or undefined when there are none or several. */
+function only(candidates: Iterable<SecCompany>): SecCompany | undefined {
+  const ciks = new Map<number, SecCompany>();
+  for (const c of candidates) ciks.set(c.cik, ciks.get(c.cik) ?? c);
+  return ciks.size === 1 ? [...ciks.values()][0] : undefined;
+}
+
+// Bonds, notes and options carry their issuer's name, but the issuer's stock ticker
+// isn't theirs: "VERIZON COMMUNICATIONS, INC. 4.329% 09/21/2028",
+// "JPMORGAN CHASE & CO. LINKED TO S&P 500 INDEX"
+const NOT_EQUITY = new RegExp(
+  [
+    "%", "\\d{1,2}/\\d{1,2}/\\d{2,4}", "\\bHYBRID\\b", "\\bPERPETUAL\\b", "\\bMTN\\b", "\\bLI?NKE?D TO\\b",
+    "\\bBDS?\\b", "\\bBONDS?\\b", "\\bNOTES?\\b", "\\bREV\\b", "\\bGO\\b", "\\bPFD\\b", "\\bPREFERRED\\b",
+    "\\bCALL\\b", "\\bPUT\\b", "\\bFLEX\\b", "\\bWARRANTS?\\b", "\\bMUNI", "\\bTAX[- ]EXEMPT\\b",
+  ].join("|"),
+  "i"
+);
+/** Described as a listed share ("CMN", "Common Stock", "ADR", "Class A") and not a bond, note or fund. */
+export function looksLikeListedStock(asset: string): boolean {
+  return /common stock|ordinary shares|\bCMN\b|\bADRS?\b|\bADS\b|\bCL(?:ASS)?[ -][A-C]\b|\bCOM\b|\bSHS\b/i.test(asset)
+    && !NOT_EQUITY.test(asset) && !FUND.test(asset);
+}
+
+// A fund is only found by its exact name: "VANGUARD TOTAL STOCK MARKET INDEX FD" must
+// not land on American Vanguard by a looser match.
+const FUND = /\b(?:ETF|FUNDS?|FDS?|INDEX|TRUST)\b/i;
+
+/**
+ * The one listed company with this name, if there is exactly one. Tried in turn:
+ * the same words; the same words in another order ("SCHWAB CHARLES CORP"); and a
+ * name cut short on a statement ("BROADRIDGE FINANCIAL SOLUTIONS IN"), except for
+ * funds. Ambiguity at any step means no answer, and bonds, notes and options never
+ * get one.
+ */
 export function findByName(dir: SymbolDirectory, asset: string): SecCompany | undefined {
-  const matches = dir.byName.get(nameTokens(asset).join(""));
-  return matches?.length === 1 ? matches[0] : undefined;
+  if (NOT_EQUITY.test(asset)) return undefined;
+  const words = nameTokens(asset);
+  if (!words.length) return undefined;
+  const key = words.join(" ");
+
+  const exact = dir.byName.get(key) ?? dir.bySortedName.get([...words].sort().join(" "));
+  if (exact) return only(exact);
+
+  const joined = words.join("");
+  if (joined.length < 8 || FUND.test(asset)) return undefined;
+  const cutShort: SecCompany[] = [];
+  for (const [name, companies] of dir.byName) {
+    if (name.replace(/ /g, "").startsWith(joined)) cutShort.push(...companies);
+  }
+  return only(cutShort);
 }
 
 /**

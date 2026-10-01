@@ -2,6 +2,7 @@ import type { AnalysisReport, AnalyzedTrade } from "../services/analysis-service
 import type { FMPTrade } from "../types/index.js";
 import type { UniquenessResult } from "../scoring/types.js";
 import { filingDateIso } from "../utils/filing-date.js";
+import type { AttentionItem } from "./attention.js";
 import { COMMITTEE_NAMES, FLAG_DESCRIPTIONS, buildScoreLookup, tradeKey, type MemberLinker } from "./html.js";
 
 // The agent-readable brief: what one report newly disclosed, scored, as JSON.
@@ -27,6 +28,8 @@ export interface BriefOptions {
   /** Member page filename within the report's folder, or null. */
   memberLink: MemberLinker;
   topWindowDays: number;
+  /** What the run couldn't resolve, with how to fix it */
+  attention?: AttentionItem[];
 }
 
 const round = (v: number, dp = 0) => Math.round(v * 10 ** dp) / 10 ** dp;
@@ -190,6 +193,7 @@ export function buildBrief(opts: BriefOptions) {
       fromScannedFiling: "Read by OCR from a scanned paper filing; check it against the filing link.",
       tickerCheck: "For scanned filings, how the ticker held up against the SEC's lists of listed companies and funds: verified (the company name matches), fund (a fund or ETF symbol, which the SEC lists without names), corrected (the ticker read was wrong and the company name gave the right one), found-by-name (no ticker on the filing; matched by company name), name-mismatch (a listed ticker for a differently named company, kept because the filing writes it), unknown-symbol (not a listed company or fund). null for electronic filings or trades not yet checked.",
       clusters: "Tickers that two or more members traded among the new filings.",
+      attention: "Things the run couldn't resolve on its own, those touching this report's new trades first, each with the steps to fix it before the next run: scanned filings that failed or read poorly (trades may be missing or wrong), scanned filings still waiting for OCR (trades missing), and stock names without a confirmed ticker (no company size, sector or committee score). Commands run from the project directory; in the Docker deployment prefix them with docker exec outlier-caucus.",
       topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context.`,
     },
     summary: {
@@ -202,7 +206,10 @@ export function buildBrief(opts: BriefOptions) {
       committeeRelevant: newFilings.filter((e) => e.flags.includes("hasCommitteeRelevance")).length,
       medianDisclosureLagDays: lags.length ? lags[Math.floor(lags.length / 2)] : null,
       highestScoring: newFilings.slice(0, 3).map((e) => ({ member: e.member, symbol: e.symbol, side: e.side, score: e.score })),
+      needsAttention: (opts.attention ?? []).length,
+      needsAttentionInThisReport: (opts.attention ?? []).filter((a) => a.inThisReport).length,
     },
+    attention: opts.attention ?? [],
     clusters: clusters(newFilings),
     newFilings,
     topPurchases,

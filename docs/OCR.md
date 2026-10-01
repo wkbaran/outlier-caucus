@@ -25,13 +25,30 @@ A misread ticker is worse than a missing one: the trade gets the wrong company's
 | `fund` | A fund or ETF symbol. The SEC lists these without names, so only the symbol is checked | Yes |
 | `corrected` | Unknown, or a company whose name doesn't match, while the filing's name matches exactly one listed company: `WMTD` became `WMT`, `VUZX` became `VUZI` | Replaced |
 | `found-by-name` | No ticker was read, and the name matches exactly one listed company, such as the "TYLER TECHNOLOGIES, INC." rows on broker statements | Added |
+| `manual` | Set by hand in `data/ticker-overrides.json` | As set |
 | `name-mismatch` | A listed company with a different name, kept because the filing writes the ticker in the asset name | Yes |
 | `rejected` | A listed company with a different name that the filing never writes, such as `GS` (Goldman Sachs) read off a municipal bond | Dropped |
 | `unknown-symbol` | Neither listed nor found by name. Often an OTC or foreign listing | Yes |
 
 Bonds, private funds and LLCs match nothing and keep no ticker. A name has to match exactly one company to be used, so an ambiguous name never picks one.
 
-`ocr:check-tickers` runs the same check over the trades already stored, as a dry run that lists what would change; add `--write` to save. Re-running it starts from `ocrTicker`, so it always gives the same answer, and it's worth running after the matching rules change.
+Names are matched leniently but never guessed: the same words in any order ("SCHWAB CHARLES CORP"), initials joined ("U.S. BANCORP"), statement abbreviations expanded ("INTL", "HLDG", "COS"), and a name cut off at a statement's column width ("UNITEDHEALTH GROUP INCORPORATE") matched to the one company it starts. Bonds, notes and options ("4.329% 09/21/2028", "HYBRID", "LINKED TO") never take their issuer's stock ticker, and funds only match their exact name.
+
+Every `report:html` run re-checks all stored OCR'd trades before scoring, so a new override or an SEC list update reaches the next report. `ocr:check-tickers` runs the same check on demand, as a dry run that lists what would change; add `--write` to save. Checks start from `ocrTicker`, so re-running always gives the same answer.
+
+### Fixing a ticker by hand
+
+What the check can't settle (a misspelled name, a company the SEC no longer lists, a stock whose name matches several companies) is listed under "Data to check" at the foot of the report, in `attention` in `latest.json`, and at the end of the run log, with the fix. To set it, add the asset name exactly as the report shows it to `data/ticker-overrides.json`, with `""` for an asset that has no listed ticker:
+
+```json
+{
+  "APLOVIN CORPORATION CMN CLASS A": "APP",
+  "MARSH ORD CMN": "MRSH",
+  "MH Built to Last LLC": ""
+}
+```
+
+Names compare ignoring case and spacing. An override beats every other check and is marked `manual`. The next run applies it; to apply it at once, run `ocr:check-tickers --write`, then rebuild the report with `report:html --no-fetch-trades --date <date> --publish`. In the Docker deployment the file lives in the state directory's `data/`, and commands run with `docker exec outlier-caucus node dist/index.js …`.
 
 ## Accuracy
 

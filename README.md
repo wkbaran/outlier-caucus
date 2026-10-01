@@ -75,6 +75,7 @@ Add `--publish` to upload the site to S3, or skip OCR with `--no-ocr` if you don
 | `clusters` | Tickers that two or more members traded among the new filings |
 | `newFilings` | Every trade found since the previous report, highest score first, with its flags, the reasons behind them, sector, how long it took to be filed and then posted, and links to the filing and member page |
 | `topPurchases` | The ten highest-scoring purchases of the last 30 days, new or not, for context |
+| `attention` | What the run couldn't resolve, such as a scanned filing that read poorly or a stock without a confirmed ticker, each with the steps to fix it before the next run. The report lists the same under "Data to check" |
 | `glossary`, `about` | What each field means and how far to trust it |
 | `links` | The HTML report, this run's own `brief.json`, the archive and the manifest |
 
