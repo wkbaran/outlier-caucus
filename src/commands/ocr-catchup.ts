@@ -38,10 +38,17 @@ export const ocrCatchupCommand = new Command("ocr:catchup")
   .option("--retry", "Also reprocess filings whose last OCR failed or has pages needing review")
   .option("--force", "Reprocess every selected filing, including ones already done")
   .option("--model <name>", "Ollama vision model (default: OCR_MODEL env or qwen3.6:27b)")
+  .option("--page <n>", "Re-read only this page of the one --filing given (repeatable); replaces that page's rows if it reads cleanly", collect, [] as string[])
   .option("--list", "List the filings that would be processed, then exit")
   .action(async (options) => {
     const ocr = ocrOptionsFromEnv();
     if (options.model) ocr.model = options.model as string;
+
+    const onlyPages = (options.page as string[]).map(Number);
+    if (onlyPages.length && ((options.filing as string[]).length !== 1 || onlyPages.some((n) => !Number.isInteger(n) || n < 1))) {
+      console.error("❌ --page takes page numbers and needs exactly one --filing.");
+      process.exit(1);
+    }
 
     const results = await loadOcrResults();
     // An explicit --chamber or --filing selection overrides OCR_CHAMBERS, so a disabled
@@ -54,7 +61,7 @@ export const ocrCatchupCommand = new Command("ocr:catchup")
     if (onlyIds.length > 0) filings = filings.filter((f) => onlyIds.includes(f.id));
     filings = filings.filter((f) => {
       const previous = results[filingKey(f)];
-      if (!previous || options.force) return true;
+      if (!previous || options.force || onlyPages.length) return true;
       return options.retry && previous.status !== "done";
     });
     if (options.limit) filings = filings.slice(0, parseInt(options.limit as string, 10));
@@ -91,7 +98,7 @@ export const ocrCatchupCommand = new Command("ocr:catchup")
       const filingStarted = Date.now();
       log(`\n[${i + 1}/${filings.length}] ${filing.member} — ${filing.chamber} ${filing.id} filed ${filing.filingDate || "?"}`);
       log(`    ${filing.url}`);
-      const outcome = await ocrAndMerge(filing, { ocr, log });
+      const outcome = await ocrAndMerge(filing, { ocr, log, onlyPages: onlyPages.length ? onlyPages : undefined });
       outcomes.push(outcome);
       const { record } = outcome;
       log(

@@ -3,10 +3,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import {
-  normalizeAmount, normalizeDate, normalizeType, validateRows, rowTicker, pageQuality, parseModelResponse,
+  normalizeAmount, normalizeDate, normalizeType, validateRows, rowTicker, looksLikeMergedRows, MERGED_ROWS_PROBLEM, pageQuality, parseModelResponse,
 } from "../src/ocr/ocr-page.js";
 import { pagesFromDocument, rotationCandidates } from "../src/ocr/render.js";
-import { earliestPlausibleDate, enabledOcrChambers, mergeOcrTrades, type FilingOcrOutcome } from "../src/ocr/ocr-filings.js";
+import { earliestPlausibleDate, enabledOcrChambers, mergeOcrTrades, mergePageRereads, type FilingOcrOutcome, type OcrFilingRecord } from "../src/ocr/ocr-filings.js";
 
 test("OCR covers House and Senate scans by default, and OCR_CHAMBERS can narrow it", () => {
   expect(enabledOcrChambers({})).toEqual(["house", "senate"]);
@@ -182,4 +182,53 @@ test("share-class codes and name suffixes are not tickers", () => {
   expect(rowTicker("AMERIPRISE FINANCIAL, INC.", "CMN")).toBeUndefined();
   expect(rowTicker("TJX COMPANIES INC (NEW)", "CMN")).toBeUndefined();
   expect(rowTicker("WALT DISNEY COMPANY (THE)", "DIS")).toBe("DIS");
+});
+
+// From Khanna filing 9116142 page 5, where a wrapped name was joined to the row above
+test("two securities run together in one name are caught", () => {
+  for (const merged of [
+    "CVS HEALTH CORP CMN EDWARDS LIFESCIENCES CORPORATI CMN",
+    "DEXCOM, INC. CMN ALLSTATE CORPORATION COMMON STOCK",
+    "COINBASE GLOBAL, INC. CMN CLASS A UNION PACIFIC CORP. JSE UNPI INT",
+  ]) expect(looksLikeMergedRows(merged), merged).toBe(true);
+  for (const single of [
+    "ZEBRA TECHNOLOGIES INC CMN CLASS A",
+    "NIKE CLASS-B CMN CLASS B",
+    "AMERICAN TOWER CORPORATION CMN.",
+    "ALLSTATE CORPORATION COMMON STOCK",
+    "ASML HOLDING N.V. ADR CMN CALL/UBS FLEX EURO PM @ 42 EXP 01/09/2026",
+    "Chevron Corporation Common Stock Option Type: Put Strike price: $145.00 Expires: 09/20/2024",
+  ]) expect(looksLikeMergedRows(single), single).toBe(false);
+
+  const { valid, rejected } = validateRows([
+    { owner: "DC", asset: "CVS HEALTH CORP CMN EDWARDS LIFESCIENCES CORPORATI CMN", type: "P", transactionDate: "05/01/26", amount: "$1,001 - $15,000" },
+  ], NOW);
+  expect(valid).toHaveLength(0);
+  expect(rejected[0].problems).toEqual([MERGED_ROWS_PROBLEM]);
+});
+
+test("re-reading pages replaces only the pages that read cleanly", () => {
+  const url = "https://example.test/9116142.pdf";
+  const row = (page: number, asset: string, firstSeen?: string) => ({ link: url, comment: `OCR page ${page}`, assetDescription: asset, source: "ocr", ...(firstSeen ? { firstSeen } : {}) });
+  const pageRecord = (page: number, status: "ok" | "needs-review") =>
+    ({ page, rotation: 0, attempts: 1, seconds: 1, status, quality: status === "ok" ? 1 : 0.5, validRows: 1, rejectedRows: 0, skippedRows: 0 } as const);
+  const previous: OcrFilingRecord = {
+    chamber: "house", id: "9116142", member: "Rohit Khanna", url, filingDate: "6/9/2026", model: "m", status: "done", pageCount: 3,
+    pages: [pageRecord(1, "ok"), pageRecord(2, "ok"), pageRecord(3, "ok")], trades: 3, merged: true, artifactDir: "", startedAt: "", finishedAt: "",
+  };
+  const stored = {
+    senateTrades: [],
+    houseTrades: [row(1, "KEEP"), row(2, "CVS HEALTH CORP CMN EDWARDS LIFESCIENCES CORPORATI CMN", "2026-06-10T00:00:00Z"), row(3, "OLD 3")],
+  };
+  const outcome: FilingOcrOutcome = {
+    record: { ...previous, pages: [pageRecord(2, "ok"), pageRecord(3, "needs-review")], finishedAt: "later" },
+    trades: [row(2, "CVS HEALTH CORP CMN"), row(2, "EDWARDS LIFESCIENCES CORPORATI CMN"), row(3, "NEW 3")],
+  };
+
+  const { record, replacedPages } = mergePageRereads(stored, previous, outcome);
+  expect(replacedPages).toEqual([2]);
+  expect(stored.houseTrades.map((t) => t.assetDescription)).toEqual(["KEEP", "OLD 3", "CVS HEALTH CORP CMN", "EDWARDS LIFESCIENCES CORPORATI CMN"]);
+  expect(stored.houseTrades.slice(2).map((t) => t.firstSeen)).toEqual(["2026-06-10T00:00:00Z", "2026-06-10T00:00:00Z"]);
+  expect(record).toMatchObject({ status: "needs-review", trades: 4, finishedAt: "later" });
+  expect(record.pages.map((p) => `${p.page}:${p.status}`)).toEqual(["1:ok", "2:ok", "3:needs-review"]);
 });

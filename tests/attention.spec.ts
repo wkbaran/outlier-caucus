@@ -39,7 +39,7 @@ test("lists what couldn't be resolved, this report's first, each with a fix", ()
   expect(ticker.fix[0]).toContain('`{"APLOVIN CORPORATION CMN CLASS A":"TICKER"}`');
   expect(review).toMatchObject({ inThisReport: false, trades: 1, filing: url });
   expect(review.fix[0]).toBe("Compare `logs/ocr/house-9116256/page-2.png` with the filing.");
-  expect(review.fix[1]).toContain("ocr:catchup --retry --filing 9116256");
+  expect(review.fix[1]).toContain("ocr:catchup --filing 9116256 --page 2");
   expect(pending.fix[1]).toContain("--date 2026-09-29");
 });
 

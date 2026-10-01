@@ -65,7 +65,7 @@ function ocrFilingItems(inputs: AttentionInputs): AttentionItem[] {
       detail: `${plural(rows.length, "trade")} came from it, but some rows on ${pages.length === 1 ? "that page" : "those pages"} were rejected, so trades may be missing or wrong.`,
       fix: [
         `Compare ${pages.map((p) => `\`logs/ocr/${record.chamber}-${id}/page-${p}.png\``).join(", ")} with the filing.`,
-        `If the scan is legible, re-read it: \`${CLI} ocr:catchup --retry --filing ${id}\` (add \`--model <name>\` to try another model).`,
+        `If the scan is legible, re-read ${pages.length === 1 ? "that page" : "those pages"}: \`${CLI} ocr:catchup --filing ${id} ${pages.map((p) => `--page ${p}`).join(" ")}\` (add \`--model <name>\` to try another model). A page that then reads cleanly replaces its old rows.`,
         "If the scan itself is illegible, nothing more can be read from it; the rows that were readable are already in.",
       ],
     });

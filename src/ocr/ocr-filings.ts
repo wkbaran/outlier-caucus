@@ -11,7 +11,7 @@ import { loadData, saveData } from "../utils/storage.js";
 import { acceptSenatEfdTerms, fetchWithUA, splitMemberName, type ReviewFiling } from "../data/government-provider.js";
 import { pagesFromDocument, rotationCandidates, type PageSource, type RenderedPage, type Rotation } from "./render.js";
 import {
-  checkOllama, normalizeDate, ocrOptionsFromEnv, ocrPage, pageQuality, validateRows, MIN_PAGE_QUALITY,
+  checkOllama, normalizeDate, ocrOptionsFromEnv, ocrPage, pageQuality, validateRows, MIN_PAGE_QUALITY, MERGED_ROWS_PROBLEM,
   type FormKind, type OcrOptions, type PageOcr, type ValidRow, type Validation,
 } from "./ocr-page.js";
 
@@ -202,9 +202,16 @@ function toTrade(row: ValidRow, filing: ReviewFiling, page: number): FMPTrade {
  * rendered image. Every row that validates becomes a trade, including rows on pages
  * flagged for review, so a hard-to-read page yields its readable rows instead of none.
  */
+/** A filing is failed when every page errored, needs review when any page does, else done. */
+function filingStatus(pages: OcrPageRecord[]): FilingStatus {
+  const errors = pages.filter((p) => p.status === "error").length;
+  const unresolved = pages.filter((p) => p.status === "needs-review" || p.status === "error").length;
+  return pages.length > 0 && errors === pages.length ? "failed" : unresolved > 0 ? "needs-review" : "done";
+}
+
 export async function ocrFiling(
   filing: ReviewFiling,
-  opts: { ocr: OcrOptions; log: Log; pages?: PageSource[] }
+  opts: { ocr: OcrOptions; log: Log; pages?: PageSource[]; onlyPages?: number[] }
 ): Promise<FilingOcrOutcome> {
   const { ocr, log } = opts;
   const artifactDir = path.join(OCR_ARTIFACT_DIR, `${filing.chamber}-${filing.id}`);
@@ -242,12 +249,15 @@ export async function ocrFiling(
 
   for (let i = 0; i < pages.length; i++) {
     const pageNo = i + 1;
+    if (opts.onlyPages && !opts.onlyPages.includes(pageNo)) continue;
     const attempt = await ocrPageWithRotations(pages[i], filing.chamber, ocr, earliestPlausibleDate(filing.filingDate));
     const { valid, rejected, skipped } = attempt.validation;
 
     let status: PageStatus;
     if (attempt.ocr.error && valid.length === 0) status = "error";
     else if (attempt.quality < MIN_PAGE_QUALITY) status = "needs-review";
+    // A merged row also lost the row it swallowed, however good the rest of the page reads
+    else if (rejected.some((r) => r.problems.includes(MERGED_ROWS_PROBLEM))) status = "needs-review";
     else if (valid.length === 0) status = "empty";
     else status = "ok";
 
@@ -291,9 +301,7 @@ export async function ocrFiling(
     if (rejected.length > 8) log(`      … ${rejected.length - 8} more rejected rows in ${artifact}.json`);
   }
 
-  const errors = record.pages.filter((p) => p.status === "error").length;
-  const unresolved = record.pages.filter((p) => p.status === "needs-review" || p.status === "error").length;
-  record.status = pages.length > 0 && errors === pages.length ? "failed" : unresolved > 0 ? "needs-review" : "done";
+  record.status = filingStatus(record.pages);
   record.trades = trades.length;
   record.finishedAt = new Date().toISOString();
   return { record, trades };
@@ -398,11 +406,52 @@ export function checkStoredTickers(data: StoredTrades, dir: SymbolDirectory, ove
   return { data: { senateTrades: recheck(data.senateTrades), houseTrades: recheck(data.houseTrades) }, checked, changes, counts };
 }
 
+/**
+ * Put a re-read of some pages into the stored trades and the filing's record. A page
+ * that read cleanly (ok or empty) replaces the rows stored from it ("OCR page N"),
+ * keeping their earliest firstSeen; a page that still needs review leaves its old
+ * rows alone. The record's entries for the re-read pages are replaced either way, so
+ * the filing's status reflects the latest reading.
+ */
+export function mergePageRereads(
+  tradeData: StoredTrades,
+  previous: OcrFilingRecord,
+  outcome: FilingOcrOutcome
+): { record: OcrFilingRecord; replacedPages: number[] } {
+  const key = previous.chamber === "house" ? "houseTrades" : "senateTrades";
+  const pageOf = (t: FMPTrade) => Number(/^OCR page (\d+)$/.exec(t.comment ?? "")?.[1]);
+  const replacedPages = outcome.record.pages.filter((p) => p.status === "ok" || p.status === "empty").map((p) => p.page);
+
+  for (const page of replacedPages) {
+    const old = tradeData[key].filter((t) => t.link === previous.url && pageOf(t) === page);
+    const firstSeen = old.length
+      ? old.map((t) => t.firstSeen).filter((s): s is string => !!s).sort()[0]
+      : new Date().toISOString();
+    const fresh = outcome.trades.filter((t) => pageOf(t) === page).map((t) => (firstSeen ? { ...t, firstSeen } : t));
+    tradeData[key] = [...tradeData[key].filter((t) => !(t.link === previous.url && pageOf(t) === page)), ...fresh];
+  }
+
+  const reread = new Map(outcome.record.pages.map((p) => [p.page, p]));
+  const pages = [...previous.pages.filter((p) => !reread.has(p.page)), ...reread.values()].sort((a, b) => a.page - b.page);
+  const record: OcrFilingRecord = {
+    ...previous,
+    model: outcome.record.model,
+    pages,
+    status: filingStatus(pages),
+    trades: tradeData[key].filter((t) => t.link === previous.url).length,
+    merged: previous.merged || replacedPages.length > 0,
+    finishedAt: outcome.record.finishedAt,
+  };
+  return { record, replacedPages };
+}
+
 /** OCR one filing, merge its rows into trades.json, and record the outcome. */
 export async function ocrAndMerge(
   filing: ReviewFiling,
-  opts: { ocr: OcrOptions; log: Log; pages?: PageSource[] }
+  opts: { ocr: OcrOptions; log: Log; pages?: PageSource[]; onlyPages?: number[] }
 ): Promise<FilingOcrOutcome> {
+  const previous = opts.onlyPages ? (await loadOcrResults())[filingKey(filing)] : undefined;
+  if (opts.onlyPages && !previous) throw new Error(`--page needs a filing that was read before; ${filing.id} wasn't`);
   const outcome = await ocrFiling(filing, opts);
   const symbols = await loadSymbolDirectory();
   if (symbols) {
@@ -415,6 +464,15 @@ export async function ocrAndMerge(
     }
   }
   const stored = await loadData<StoredTrades>(TRADES_FILE);
+  if (previous) {
+    if (!stored?.data) throw new Error("no trades.json to merge the re-read pages into");
+    const { record, replacedPages } = mergePageRereads(stored.data, previous, outcome);
+    if (replacedPages.length) await saveData(TRADES_FILE, stored.data);
+    const kept = outcome.record.pages.map((p) => p.page).filter((p) => !replacedPages.includes(p));
+    opts.log(`    pages replaced: ${replacedPages.join(", ") || "none"}${kept.length ? `; kept the old rows for ${kept.join(", ")}` : ""}`);
+    await saveOcrRecord(record);
+    return { record, trades: outcome.trades };
+  }
   if (stored?.data) {
     outcome.record.merged = mergeOcrTrades(stored.data, outcome);
     if (outcome.record.merged) await saveData(TRADES_FILE, stored.data);

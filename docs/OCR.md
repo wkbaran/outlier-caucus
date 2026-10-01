@@ -7,7 +7,7 @@ OCR is optional. Without a reachable Ollama the daily run logs a warning and car
 ## How a filing is read
 
 1. Each page is rendered to PNG with MuPDF. Pages scanned sideways (portrait for the landscape House form, or the reverse for the Senate form) are rotated first, because the model reads a sideways page into confident but wrong rows.
-2. The model returns rows as JSON. A row becomes a trade only if its transaction date, amount range and purchase/sale type all normalize to known values. Account header rows, form boilerplate and implausible dates are dropped.
+2. The model returns rows as JSON. A row becomes a trade only if its transaction date, amount range and purchase/sale type all normalize to known values. Account header rows, form boilerplate and implausible dates are dropped. So is a row whose asset name runs two securities together ("CVS HEALTH CORP CMN EDWARDS LIFESCIENCES CORPORATI CMN"): on broker statements a long name wraps onto a second line that sits just under the row above, and the model can join it to that row and drop the wrapped row's own trade. The prompt warns against this, and a page where it still happens is flagged for review whatever its other rows look like.
 3. Every valid row is kept. A page where fewer than 80% of rows are valid is flagged for review in the log, but its readable rows still go in: a slightly wrong row is easier to notice in the report than a missing trade.
 4. The ticker comes from the asset name when the filing writes one there ("Marsh Common Stock (MRSH)"), and from the model's ticker field only otherwise. The model sometimes fills that field with the House asset-type code (`ST` from `[ST]`) or a broker statement's share-class column (`CMN`), so those are dropped.
 5. The ticker is then checked against the SEC's lists of listed companies (with their names) and of fund and ETF symbols, and against the company name on the filing. See [Ticker checks](#ticker-checks).
@@ -79,7 +79,10 @@ A page takes about 100 seconds, so a backlog is worked through with `ocr:catchup
 .\ocr-catchup.ps1 --limit 5              # a few filings at a time
 .\ocr-catchup.ps1 --filing 9115726       # one filing
 .\ocr-catchup.ps1 --retry                # re-run filings that failed or have pages needing review
+.\ocr-catchup.ps1 --filing 9116142 --page 5 --page 8   # re-read just these pages of one filing
 ```
+
+`--page` re-reads only the named pages of a filing read before. Each page that reads cleanly replaces the rows stored from it, and a page that still needs review leaves its old rows in place, so a re-read never makes things worse. It's much cheaper than re-reading a 40-page statement for one bad page.
 
 Each run writes `logs\ocr-catchup-<timestamp>.log`: one line per page (status, rotation, valid and rejected rows, time), every rejected row and why, and a closing list of pages to review. For every page, `logs\ocr\<chamber>-<id>\page-N.json` holds the raw model output and validation, and pages needing review also get `page-N.png`. Per-filing outcomes are kept in `data/ocr-results.json`.
 

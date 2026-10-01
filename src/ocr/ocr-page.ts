@@ -168,6 +168,18 @@ export function rowTicker(asset: string, raw: string | null | undefined): string
 const SHARE_CLASS_CODES = new Set(["CMN", "COM", "ORD", "PFD", "SHS"]);
 
 /**
+ * Two securities run together in one asset name, "CVS HEALTH CORP CMN EDWARDS
+ * LIFESCIENCES CORPORATI CMN": the model joined a wrapped name to the row above and
+ * dropped that row's own trade. Option descriptions ("... Common Stock Option Type:
+ * Call ...", "... CMN CALL/UBS FLEX ...") continue after the share class legitimately.
+ */
+export function looksLikeMergedRows(asset: string): boolean {
+  return /\b(?:CMN|COMMON STOCK)\b\.?(?:\s+CL(?:ASS)?[\s-]*[A-Z]\b)?\s+(?!CL(?:ASS)?\b|OPTION\b|CALL\b|PUT\b)[A-Z][A-Z0-9&.,'/-]*\s+[A-Z0-9]/i.test(asset);
+}
+
+export const MERGED_ROWS_PROBLEM = "two rows' asset names run together; the page must be re-read";
+
+/**
  * @param earliest YYYY-MM-DD; transaction dates before it are rejected as misreads
  *   (e.g. a date well before the filing was submitted)
  */
@@ -199,6 +211,7 @@ export function validateRows(rows: OcrRow[], now = new Date(), earliest?: string
 
     const problems: string[] = [];
     if (!asset) problems.push("missing asset name");
+    else if (looksLikeMergedRows(asset)) problems.push(MERGED_ROWS_PROBLEM);
     if (!date) problems.push(`unreadable or implausible date "${row.transactionDate ?? ""}"`);
     else if (earliest && date < earliest) problems.push(`date ${date} is implausibly long before the filing`);
     if (!amount) problems.push(`unrecognized amount "${row.amount ?? ""}"`);
@@ -270,6 +283,10 @@ H $5,000,001 - $25,000,000; I $25,000,001 - $50,000,000; J Over $50,000,000;
 K Spouse/DC Amount over $1,000,000. Use the range text, not the letter.
 Section header rows that name an account or trust but have no date are not transactions.
 The printed example row (for instance "Example Mega Corp Common Stock") is not a transaction.
+Each row with its own transaction date is one transaction, so return exactly one element per dated row.
+A long asset name can wrap onto two lines inside its own row: the wrapped name's first line sits
+just below the row above, but it belongs to the row whose date and X marks are beside it.
+Never join the asset names of two rows into one element.
 If the page has no transaction rows, return []. Do not guess values you cannot read; use null.`,
   senate: `This is a scanned page of a U.S. Senate Periodic Transaction Report ("Periodic Disclosure of Financial Transactions").
 Transcribe every numbered transaction row. Return ONLY a JSON array; each element:
