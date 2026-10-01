@@ -382,6 +382,14 @@ function renderSaleRow(
 </tr>`;
 }
 
+const TABLE_PAGE = 25;
+
+/** Count and "Show more" under an Every trade table; the script pages the rows. */
+function tableFootHtml(rows: number, emptyText: string): string {
+  if (!rows) return `<p class="empty">${esc(emptyText)}</p>`;
+  return `<div class="ranked-foot table-foot"><span class="table-count"></span><button type="button" class="table-more">Show ${TABLE_PAGE} more</button></div>`;
+}
+
 function tradeTableHtml(
   rows: Array<{ trade: FMPTrade; party: string | undefined }>,
   exchangeMap: Map<string, string>,
@@ -733,6 +741,25 @@ const REPORT_JS = `
   });
   render();
 
+  // Every trade: page each table
+  var ROWS = ${TABLE_PAGE};
+  document.querySelectorAll('.tab-panel').forEach(function (panel) {
+    var rows = panel.querySelectorAll('tbody tr');
+    var foot = panel.querySelector('.table-foot');
+    if (!foot) return;
+    var label = foot.querySelector('.table-count');
+    var btn = foot.querySelector('.table-more');
+    var shownRows = ROWS;
+    function page() {
+      rows.forEach(function (tr, i) { tr.hidden = i >= shownRows; });
+      var visible = Math.min(shownRows, rows.length);
+      label.textContent = 'Showing ' + visible + ' of ' + rows.length;
+      btn.hidden = visible >= rows.length;
+    }
+    btn.addEventListener('click', function () { shownRows += ROWS; page(); });
+    page();
+  });
+
   // Every trade: purchases / sales
   var tabBtns = document.querySelectorAll('.tab-btn');
   var tabPanels = document.querySelectorAll('.tab-panel');
@@ -919,11 +946,12 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   // so the ranking stays current instead of surfacing the same all-time high scorers.
   const windowCutoff = new Date(report.generatedAt);
   windowCutoff.setDate(windowCutoff.getDate() - topWindowDays);
-  const isWithinWindow = (t: AnalyzedTrade): boolean => {
-    if (!t.trade.transactionDate) return false;
-    const d = new Date(t.trade.transactionDate);
+  const isRecent = (trade: FMPTrade): boolean => {
+    if (!trade.transactionDate) return false;
+    const d = new Date(trade.transactionDate);
     return !isNaN(d.getTime()) && d >= windowCutoff;
   };
+  const isWithinWindow = (t: AnalyzedTrade): boolean => isRecent(t.trade);
 
   // Rank groups, so a purchase split into several lots shows once. A group
   // counts as recent when any of its trades falls in the window.
@@ -944,11 +972,18 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
 
   const newly = [...purchaseTrades, ...salesTrades].filter(({ trade }) => isNewlyDisclosed(trade));
 
+  // Every trade lists the same window as the ranking, plus anything disclosed
+  // since the last report however long ago it was traded. Member pages keep
+  // the full history.
+  const inTable = ({ trade }: { trade: FMPTrade }) => isRecent(trade) || isNewlyDisclosed(trade);
+  const tablePurchases = purchaseTrades.filter(inTable);
+  const tableSales = salesTrades.filter(inTable);
+
   const csvSections = {
     "top-purchases": { filename: `top-purchases-${dateStr}.csv`, csv: buildCsv(CARD_CSV_HEADERS, topPurchases.map(cardCsvRow)) },
     "committee-relevant": { filename: `committee-relevant-${dateStr}.csv`, csv: buildCsv(CARD_CSV_HEADERS, committeeRelevant.map(cardCsvRow)) },
-    "recent-purchases": { filename: `recent-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, purchaseTrades.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
-    "recent-sales": { filename: `recent-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, salesTrades.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
+    "recent-purchases": { filename: `recent-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tablePurchases.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
+    "recent-sales": { filename: `recent-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tableSales.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
   };
 
   const dates = report.scoredTrades.map((t) => t.trade.transactionDate).filter((d): d is string => !!d).sort();
@@ -1033,11 +1068,11 @@ ${siteHeader(indexUrl ?? "#", picker)}
       <div class="band-head">
         <div>
           <h2 id="every-h">Every trade</h2>
-          <p>All ${report.totalTradesAnalyzed.toLocaleString("en-US")} disclosed trades from ${esc(shortDate(dates[0], "any"))} to ${esc(shortDate(dates[dates.length - 1], "any"))}, newest trade first.${newly.length ? " Trades disclosed since the last report are marked new." : ""}</p>
+          <p>Trades from the last ${topWindowDays} days, newest first${newly.length ? ", plus every trade disclosed since the last report, marked new" : ""}. The member pages hold all ${report.totalTradesAnalyzed.toLocaleString("en-US")} trades on file, back to ${esc(shortDate(dates[0], "any"))}.</p>
         </div>
         <span class="seg" role="tablist" aria-label="Purchases or sales">
-          <button class="tab-btn" type="button" role="tab" data-tab="tab-purchases">Purchases ${purchaseTrades.length.toLocaleString("en-US")}</button>
-          <button class="tab-btn" type="button" role="tab" data-tab="tab-sales">Sales ${salesTrades.length.toLocaleString("en-US")}</button>
+          <button class="tab-btn" type="button" role="tab" data-tab="tab-purchases">Purchases ${tablePurchases.length.toLocaleString("en-US")}</button>
+          <button class="tab-btn" type="button" role="tab" data-tab="tab-sales">Sales ${tableSales.length.toLocaleString("en-US")}</button>
         </span>
       </div>
       <div class="tab-panel" id="tab-purchases" role="tabpanel">
@@ -1045,7 +1080,8 @@ ${siteHeader(indexUrl ?? "#", picker)}
           <div class="section-header">
             ${csvButtonHtml("recent-purchases")}
           </div>
-          ${tradeTableHtml(purchaseTrades, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed)}
+          ${tradeTableHtml(tablePurchases, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed)}
+          ${tableFootHtml(tablePurchases.length, `No purchases in the last ${topWindowDays} days.`)}
         </section>
       </div>
       <div class="tab-panel" id="tab-sales" role="tabpanel">
@@ -1053,7 +1089,8 @@ ${siteHeader(indexUrl ?? "#", picker)}
           <div class="section-header">
             ${csvButtonHtml("recent-sales")}
           </div>
-          ${tradeTableHtml(salesTrades, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed)}
+          ${tradeTableHtml(tableSales, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed)}
+          ${tableFootHtml(tableSales.length, `No sales in the last ${topWindowDays} days.`)}
         </section>
       </div>
     </div>
