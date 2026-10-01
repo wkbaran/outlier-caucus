@@ -20,6 +20,8 @@ export interface ReportManifestEntry {
   newTrades?: number;
   /** High-water filing date for this run — the next run's "what is new" baseline. */
   maxFilingDate?: string;
+  /** ISO time the report was built; trades first seen after it are new in the next report. */
+  ranAt?: string;
 }
 
 /**
@@ -37,6 +39,16 @@ export function previousFilingBaseline(
     if (entry.date >= date) continue;
     const seen = entry.maxFilingDate;
     if (seen && (max === null || seen > max)) max = seen;
+  }
+  return max;
+}
+
+/** When the latest run before `date` was built, or null if none recorded one. */
+export function previousRanAt(manifest: ReportManifestEntry[], date: string): string | null {
+  let max: string | null = null;
+  for (const entry of manifest) {
+    if (entry.date >= date || !entry.ranAt) continue;
+    if (max === null || entry.ranAt > max) max = entry.ranAt;
   }
   return max;
 }

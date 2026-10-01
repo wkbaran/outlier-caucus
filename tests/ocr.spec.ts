@@ -143,6 +143,29 @@ test("OCR merge replaces stored rows only for fully successful filings", () => {
   expect(partial.houseTrades.map((t) => t.symbol)).toEqual(["OLD", "KEEP"]);
 });
 
+test("OCR merge stamps a new filing's rows and keeps the first stamp on a re-read", () => {
+  const url = "https://example.test/ptr.pdf";
+  const outcome: FilingOcrOutcome = {
+    record: {
+      chamber: "house", id: "1", member: "A B", url, filingDate: "", model: "m", status: "done", pageCount: 1,
+      pages: [], trades: 1, merged: false, artifactDir: "", startedAt: "", finishedAt: "",
+    },
+    trades: [{ link: url, symbol: "NEW", source: "ocr" }],
+  };
+
+  const fresh = { senateTrades: [], houseTrades: [] as Array<Record<string, string>> };
+  mergeOcrTrades(fresh, outcome);
+  expect(Date.parse(fresh.houseTrades[0].firstSeen)).toBeGreaterThan(Date.now() - 60_000);
+
+  const reread = { senateTrades: [], houseTrades: [{ link: url, symbol: "OLD", firstSeen: "2026-09-01T00:00:00Z" }] };
+  mergeOcrTrades(reread, outcome);
+  expect(reread.houseTrades.map((t) => t.firstSeen)).toEqual(["2026-09-01T00:00:00Z"]);
+
+  const legacy = { senateTrades: [], houseTrades: [{ link: url, symbol: "OLD" }] };
+  mergeOcrTrades(legacy, outcome);
+  expect(legacy.houseTrades[0]).not.toHaveProperty("firstSeen");
+});
+
 // From House filing 20035491, where the model put the asset-type code in the ticker field
 test("the ticker written in the asset name beats the model's ticker field", () => {
   expect(rowTicker("Marsh Common Stock (MRSH)", "ST")).toBe("MRSH");

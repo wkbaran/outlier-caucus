@@ -14,8 +14,12 @@ export interface BriefOptions {
   /** Every trade on file; the brief picks out the newly disclosed ones. */
   trades: FMPTrade[];
   isNewlyDisclosed: (trade: FMPTrade) => boolean;
-  /** Previous run's filing high-water mark; null on the first run, when nothing counts as new. */
+  /** False on the first report, when nothing counts as new. */
+  hasPrevious: boolean;
+  /** Previous run's filing high-water mark, which decides newness for trades stored without firstSeen. */
   filingBaseline: string | null;
+  /** When the previous report ran; trades first seen after it are new. */
+  foundAfter: string | null;
   previousReport?: { date: string; label: string };
   reportDate: string;
   reportLabel: string;
@@ -96,7 +100,9 @@ function tradeEntry(
     owner: trade.owner ?? null,
     transactionDate: trade.transactionDate ?? null,
     filedDate: filed,
+    foundAt: trade.firstSeen ?? null,
     disclosureLagDays: daysBetween(trade.transactionDate, filed),
+    postedLagDays: trade.firstSeen ? daysBetween(filed, trade.firstSeen.slice(0, 10)) : null,
     score: score?.overallScore ?? null,
     flags: score ? (Object.keys(FLAG_DESCRIPTIONS) as Array<keyof UniquenessResult["flags"]>).filter((k) => score.flags[k]) : [],
     reasons: score ? reasons(score) : [],
@@ -131,7 +137,7 @@ function clusters(entries: BriefTrade[]) {
 }
 
 export function buildBrief(opts: BriefOptions) {
-  const { report, filingBaseline } = opts;
+  const { report } = opts;
   const scoreLookup = buildScoreLookup(report);
   const entry = (t: FMPTrade) => tradeEntry(t, scoreLookup.get(tradeKey(t)), opts);
 
@@ -162,8 +168,8 @@ export function buildBrief(opts: BriefOptions) {
       "so reportDate is the last day anything new was found. Members have up to 45 days to disclose a trade, so check disclosureLagDays " +
       "before treating one as timely. Scores rank how unusual a trade is, not whether it was informed. Paths are relative to the " +
       "site root, where latest.json lives. Not investment advice.",
-    newSince: filingBaseline
-      ? { previousReport: opts.previousReport?.date ?? null, filedAfter: filingBaseline }
+    newSince: opts.hasPrevious
+      ? { previousReport: opts.previousReport?.date ?? null, foundAfter: opts.foundAfter, filedAfter: opts.filingBaseline }
       : null,
     links: {
       report: `${opts.reportDate}/report.html`,
@@ -172,12 +178,14 @@ export function buildBrief(opts: BriefOptions) {
       reports: "manifest.json",
     },
     glossary: {
-      newFilings: "Trades whose filing date is after newSince.filedAfter, the newest filing date in the previous report. Highest score first. Empty, with newSince null, on the first report.",
+      newFilings: "Trades this service first found after the previous report ran (newSince.foundAfter); trades stored before that was recorded count as new when filed after newSince.filedAfter. Highest score first. Empty, with newSince null, on the first report.",
       score: "Uniqueness score, 0 to 100: a weighted blend of company size, trade size against the member's usual, how rarely Congress trades the asset, committee oversight of its sector, derivatives, and indirect ownership. null when the trade could not be scored.",
       flags: Object.fromEntries(Object.entries(FLAG_DESCRIPTIONS).map(([k, v]) => [k, v.title])),
       reasons: "The flags spelled out with the numbers behind them.",
       amountRange: "The disclosed dollar band, parsed. Filings give a range, never an exact amount; high is null for open-ended bands.",
       disclosureLagDays: "Days from the trade to its filing.",
+      foundAt: "When this service first found the trade. null for trades stored before that was recorded.",
+      postedLagDays: "Days from the filing date to foundAt. The House posts paper filings days after receiving them, so a large value means the news is older than the filing date suggests.",
       fromScannedFiling: "Read by OCR from a scanned paper filing; check it against the filing link.",
       clusters: "Tickers that two or more members traded among the new filings.",
       topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context.`,

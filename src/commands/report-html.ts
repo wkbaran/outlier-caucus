@@ -27,7 +27,7 @@ function createMarketDataProvider(cacheOnly: boolean) {
 }
 import { buildHtmlReport, buildPartyPage, buildMemberPage, buildScoreLookup, type MemberLinker } from "../output/html.js";
 import { createMemberResolver } from "../output/member-identity.js";
-import { buildIndexPage, buildHomePage, loadManifest, upsertManifest, rebuildManifest, previousFilingBaseline } from "../output/index-page.js";
+import { buildIndexPage, buildHomePage, loadManifest, upsertManifest, rebuildManifest, previousFilingBaseline, previousRanAt } from "../output/index-page.js";
 import type { ManifestSymbol, ReportManifestEntry } from "../output/index-page.js";
 import { createNewlyDisclosedPredicate, filingDateIso, maxFilingDate } from "../utils/filing-date.js";
 import { publishOutput } from "../publish.js";
@@ -274,21 +274,25 @@ export const reportHtmlCommand = new Command("report:html")
       // findable — as gold rows here and as chips on the archive page.
       const priorManifest = await loadManifest(webDir);
       const filingBaseline = previousFilingBaseline(priorManifest, dateStr);
-      const isNewlyDisclosed = createNewlyDisclosedPredicate(filingBaseline);
+      // A rebuilt report keeps its original run time, so trades found since stay out of it.
+      const ranAt = priorManifest.find((e) => e.date === dateStr && options.date)?.ranAt ?? new Date().toISOString();
+      const foundAfter = previousRanAt(priorManifest, dateStr);
+      const isNewlyDisclosed = createNewlyDisclosedPredicate(filingBaseline, { foundAfter, foundThrough: ranAt });
+      const hasPrevious = filingBaseline !== null || foundAfter !== null;
       const runMaxFiling = maxFilingDate(allTrades);
 
       const newlyDisclosed = allTrades.filter(isNewlyDisclosed);
       console.log(
-        filingBaseline
-          ? `   Newly disclosed since ${filingBaseline}: ${newlyDisclosed.length} trade${newlyDisclosed.length !== 1 ? "s" : ""}`
-          : "   No prior filing baseline in manifest - nothing marked new this run"
+        hasPrevious
+          ? `   Newly disclosed since the previous report: ${newlyDisclosed.length} trade${newlyDisclosed.length !== 1 ? "s" : ""}`
+          : "   No previous report in manifest - nothing marked new this run"
       );
 
       // Chips preview the run's new disclosures, deduped by symbol+side so one
       // member unloading a position in six tranches does not fill the row.
       // Symbol-less rows (bonds, options, unparsed OCR) are skipped rather than
       // sliced off, so eight slots always yield eight chips when eight exist.
-      const chipSource = filingBaseline
+      const chipSource = hasPrevious
         ? newlyDisclosed
         // Bootstrap: with no baseline nothing can honestly be called new, so
         // preview the most recently *filed* trades instead of leaving the
@@ -409,12 +413,12 @@ export const reportHtmlCommand = new Command("report:html")
       // The picker and chart list every run including this one, which is not
       // in the manifest until after the report is written.
       const runs = [
-        { date: dateStr, label: runDateLabel, file: reportRelPath, newTrades: filingBaseline ? newlyDisclosed.length : undefined },
+        { date: dateStr, label: runDateLabel, file: reportRelPath, newTrades: hasPrevious ? newlyDisclosed.length : undefined },
         ...priorManifest.filter((e) => e.date !== dateStr).map((e) => ({ date: e.date, label: e.dateLabel, file: e.file, newTrades: e.newTrades })),
       ]
         .sort((a, b) => b.date.localeCompare(a.date))
         .map((r) => ({ date: r.date, label: r.label, href: `../${r.file}`, newTrades: r.newTrades }));
-      const previousRun = filingBaseline
+      const previousRun = hasPrevious
         ? priorManifest.filter((e) => e.date < dateStr).sort((a, b) => b.date.localeCompare(a.date))[0]
         : undefined;
       const previousRunLabel = previousRun?.dateLabel;
@@ -443,7 +447,9 @@ export const reportHtmlCommand = new Command("report:html")
         report,
         trades: allTrades,
         isNewlyDisclosed,
+        hasPrevious,
         filingBaseline,
+        foundAfter,
         previousReport: previousRun && { date: previousRun.date, label: previousRun.dateLabel },
         reportDate: dateStr,
         reportLabel: runDateLabel,
@@ -465,6 +471,7 @@ export const reportHtmlCommand = new Command("report:html")
         newSymbols,
         newTrades: newlyDisclosed.length,
         ...(runMaxFiling ? { maxFilingDate: runMaxFiling } : {}),
+        ranAt,
       });
 
       await writeIndexPages(webDir, manifest);

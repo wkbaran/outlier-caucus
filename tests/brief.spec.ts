@@ -36,7 +36,9 @@ const report = {
 const opts = {
   report, trades,
   isNewlyDisclosed: createNewlyDisclosedPredicate("2026-09-15"),
+  hasPrevious: true,
   filingBaseline: "2026-09-15",
+  foundAfter: null,
   previousReport: { date: "2026-09-16", label: "September 16, 2026" },
   reportDate: "2026-09-25", reportLabel: "September 25, 2026",
   resolveParty: () => "Democrat",
@@ -47,7 +49,7 @@ const opts = {
 test("lists only trades filed after the previous report, highest score first", () => {
   const brief = buildBrief(opts);
   expect(brief.schema).toBe(BRIEF_SCHEMA);
-  expect(brief.newSince).toEqual({ previousReport: "2026-09-16", filedAfter: "2026-09-15" });
+  expect(brief.newSince).toEqual({ previousReport: "2026-09-16", foundAfter: null, filedAfter: "2026-09-15" });
   expect(brief.newFilings.map((e) => e.symbol)).toEqual(["ZZZ", "ACME", "ACME"]);
   expect(brief.summary).toMatchObject({ newTrades: 3, purchases: 2, sales: 1, members: 2, symbols: 2 });
 });
@@ -74,7 +76,7 @@ test("top purchases include older filings in the window", () => {
 });
 
 test("nothing is new on the first report", () => {
-  const brief = buildBrief({ ...opts, filingBaseline: null, isNewlyDisclosed: () => false, previousReport: undefined });
+  const brief = buildBrief({ ...opts, hasPrevious: false, filingBaseline: null, isNewlyDisclosed: () => false, previousReport: undefined });
   expect(brief.newSince).toBeNull();
   expect(brief.newFilings).toEqual([]);
 });
@@ -83,4 +85,10 @@ test("amount bands parse, including open-ended ones", () => {
   expect(amountRange("$1,001 - $15,000")).toEqual({ low: 1001, high: 15000 });
   expect(amountRange("Over $50,000,000")).toEqual({ low: 50000000, high: null });
   expect(amountRange(undefined)).toEqual({ low: null, high: null });
+});
+
+test("a late-posted filing shows how long it took to appear", () => {
+  const late = trade({ symbol: "LATE", dateRecieved: "9/23/2026", firstSeen: "2026-09-29T00:03:58Z" });
+  const [entry] = buildBrief({ ...opts, trades: [late], isNewlyDisclosed: () => true }).newFilings;
+  expect(entry).toMatchObject({ filedDate: "2026-09-23", foundAt: "2026-09-29T00:03:58Z", postedLagDays: 6 });
 });

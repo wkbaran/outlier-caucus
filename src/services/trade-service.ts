@@ -60,7 +60,7 @@ function getMostRecentTradeDate(trades: FMPTrade[]): Date | null {
  * PDF table row parsed twice), and since that happens within one batch,
  * checking only against previously-seen trades would let both copies through.
  */
-function mergeTrades(existing: FMPTrade[], newTrades: FMPTrade[]): FMPTrade[] {
+function mergeTrades(existing: FMPTrade[], newTrades: FMPTrade[], now: string): FMPTrade[] {
   const seenKeys = new Set(existing.map(getTradeKey));
   const uniqueNewTrades: FMPTrade[] = [];
 
@@ -68,10 +68,23 @@ function mergeTrades(existing: FMPTrade[], newTrades: FMPTrade[]): FMPTrade[] {
     const key = getTradeKey(trade);
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    uniqueNewTrades.push(trade);
+    uniqueNewTrades.push({ ...trade, firstSeen: trade.firstSeen ?? now });
   }
 
   return [...existing, ...uniqueNewTrades];
+}
+
+/**
+ * A refresh refetches everything, so carry each trade's firstSeen over from the
+ * data it replaces. Only trades that weren't stored before count as found now.
+ */
+export function carryFirstSeen(previous: FMPTrade[], fetched: FMPTrade[], now: string): FMPTrade[] {
+  const before = new Map(previous.map((t) => [getTradeKey(t), t]));
+  return fetched.map((t) => {
+    const old = before.get(getTradeKey(t));
+    const firstSeen = old ? old.firstSeen : t.firstSeen ?? now;
+    return firstSeen ? { ...t, firstSeen } : t;
+  });
 }
 
 /**
@@ -137,6 +150,7 @@ export async function fetchTrades(
   }
 
   console.log(`\nFetching new trades via ${provider.getName()}...`);
+  const now = new Date().toISOString();
 
   const newSenateTrades = await provider.fetchSenateTrades(senateStartDate ?? startDate);
 
@@ -164,8 +178,8 @@ export async function fetchTrades(
     console.log(`\n🔗 Merging with existing data...`);
     console.log(`  Existing: ${existingData.senateTrades.length} Senate, ${existingData.houseTrades.length} House`);
 
-    finalSenateTrades = mergeTrades(existingData.senateTrades, newSenateTrades);
-    finalHouseTrades = mergeTrades(existingData.houseTrades, newHouseTrades);
+    finalSenateTrades = mergeTrades(existingData.senateTrades, newSenateTrades, now);
+    finalHouseTrades = mergeTrades(existingData.houseTrades, newHouseTrades, now);
 
     const senateAdded = finalSenateTrades.length - existingData.senateTrades.length;
     const houseAdded = finalHouseTrades.length - existingData.houseTrades.length;
@@ -173,8 +187,9 @@ export async function fetchTrades(
     console.log(`  Added: ${senateAdded} new Senate trades, ${houseAdded} new House trades`);
     console.log(`  Final: ${finalSenateTrades.length} Senate, ${finalHouseTrades.length} House`);
   } else {
-    finalSenateTrades = newSenateTrades;
-    finalHouseTrades = newHouseTrades;
+    const previous = refresh ? await loadTrades() : null;
+    finalSenateTrades = carryFirstSeen(previous?.senateTrades ?? [], newSenateTrades, now);
+    finalHouseTrades = carryFirstSeen(previous?.houseTrades ?? [], newHouseTrades, now);
   }
 
   const tradeData: TradeData = {

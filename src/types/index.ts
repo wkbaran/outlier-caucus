@@ -169,6 +169,8 @@ export const FMPTradeSchema = z.object({
   symbol: z.string().optional(),
   // "ocr" when transcribed by a vision model from a scanned filing
   source: z.string().optional(),
+  // ISO time this service first stored the trade; absent on trades stored before it was recorded
+  firstSeen: z.string().optional(),
 });
 
 export type FMPTrade = z.infer<typeof FMPTradeSchema>;

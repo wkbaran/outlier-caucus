@@ -73,7 +73,7 @@ Add `--publish` to upload the site to S3, or skip OCR with `--no-ocr` if you don
 | `newSince` | The previous report and the filing date that counts as new |
 | `summary` | Counts of new purchases, sales, members and tickers, the median disclosure lag, and the three highest-scoring new trades |
 | `clusters` | Tickers that two or more members traded among the new filings |
-| `newFilings` | Every newly disclosed trade, highest score first, with its flags, the reasons behind them, sector, disclosure lag, and links to the filing and member page |
+| `newFilings` | Every trade found since the previous report, highest score first, with its flags, the reasons behind them, sector, how long it took to be filed and then posted, and links to the filing and member page |
 | `topPurchases` | The ten highest-scoring purchases of the last 30 days, new or not, for context |
 | `glossary`, `about` | What each field means and how far to trust it |
 | `links` | The HTML report, this run's own `brief.json`, the archive and the manifest |

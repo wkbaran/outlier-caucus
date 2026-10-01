@@ -312,7 +312,14 @@ export function mergeOcrTrades(tradeData: StoredTrades, outcome: FilingOcrOutcom
   const existing = tradeData[key].filter((t) => t.link === record.url);
   if (record.status !== "done" && existing.length > 0) return false;
 
-  tradeData[key] = [...tradeData[key].filter((t) => t.link !== record.url), ...trades];
+  // Rows replacing earlier ones for the same filing keep the earliest firstSeen, so
+  // re-reading a filing doesn't make its trades new again. Earlier rows without one
+  // predate the field and stay unstamped.
+  const firstSeen = existing.length
+    ? existing.map((t) => t.firstSeen).filter((s): s is string => !!s).sort()[0]
+    : new Date().toISOString();
+  const stamped = trades.map((t) => (firstSeen ? { ...t, firstSeen } : t));
+  tradeData[key] = [...tradeData[key].filter((t) => t.link !== record.url), ...stamped];
   return true;
 }
 

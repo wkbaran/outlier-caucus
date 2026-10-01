@@ -38,16 +38,29 @@ export function maxFilingDate(trades: FMPTrade[]): string | null {
 /**
  * Build a predicate for "disclosed since the previous run".
  *
- * `baseline` is the previous run's high-water filing date. With no baseline
- * (first run after this feature, or a manifest with no history) nothing is
- * marked new — better a quiet page than one where all 10k rows light up.
+ * A trade stamped with `firstSeen` is new when this service first stored it
+ * after the previous report ran (`foundAfter`) and no later than this report
+ * (`foundThrough`, for rebuilding an earlier report). Filing dates can't decide
+ * that: the House posts paper filings days after the date they were received, so
+ * a late-posted filing can carry a date older than ones already reported.
+ *
+ * Trades stored before `firstSeen` was recorded fall back to comparing their
+ * filing date with `baseline`, the previous run's high-water filing date.
+ *
+ * With no previous report nothing is marked new: better a quiet page than one
+ * where all 10k rows light up.
  */
 export function createNewlyDisclosedPredicate(
-  baseline: string | null
+  baseline: string | null,
+  window: { foundAfter?: string | null; foundThrough?: string } = {}
 ): (trade: FMPTrade) => boolean {
-  if (!baseline) return () => false;
+  const { foundAfter, foundThrough } = window;
+  if (!baseline && !foundAfter) return () => false;
   return (trade) => {
+    if (trade.firstSeen) {
+      return (!foundAfter || trade.firstSeen > foundAfter) && (!foundThrough || trade.firstSeen <= foundThrough);
+    }
     const iso = filingDateIso(trade);
-    return iso !== null && iso > baseline;
+    return baseline !== null && iso !== null && iso > baseline;
   };
 }
