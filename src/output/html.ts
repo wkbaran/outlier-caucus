@@ -4,6 +4,7 @@ import type { UniquenessResult } from "../scoring/types.js";
 import { SENATE_COMMITTEE_TAXONOMY, HOUSE_COMMITTEE_TAXONOMY } from "../data/committee-sector-taxonomy.js";
 import { memberKey } from "./member-identity.js";
 import type { AttentionItem } from "./attention.js";
+import { collectGroups, splitByGroupId, sumAmounts, type TradeGroup } from "../services/trade-groups.js";
 import { HTML_OPEN, THEME_JS, themeHead, siteHeader, shortDate, shortAmount, tidyAsset } from "./theme.js";
 
 /** Returns the member page filename for a trade's filer, or null if no page exists */
@@ -248,28 +249,36 @@ function buildCsv(headers: string[], rows: Array<Array<string | number>>): strin
 }
 
 const CARD_CSV_HEADERS = [
-  "Date", "Symbol", "Type", "Amount", "Chamber", "Trader", "Party",
+  "Date", "Last Date", "Trades", "Symbol", "Type", "Amount", "Chamber", "Trader", "Party",
   "Score", "Flags", "Owner", "Asset Type", "Asset Description", "Filing Link",
 ];
 
-function cardCsvRow(analyzed: AnalyzedTrade): Array<string | number> {
-  const { trade, trader, score } = analyzed;
+/** Distinct non-empty values, joined. */
+function distinct(values: Array<string | undefined>, sep = "; "): string {
+  return [...new Set(values.filter((v): v is string => !!v))].join(sep);
+}
+
+/** One row per ranked entry; a group's amount is the total, and its owners, asset types and filings are listed. */
+function cardCsvRow(group: TradeGroup): Array<string | number> {
+  const { lead, trades, score } = group;
+  const { trade, trader } = lead;
   const name = `${trade.firstName ?? ""} ${trade.lastName ?? ""}`.trim();
-  const owner = trade.owner && trade.owner.toLowerCase() !== "self" ? trade.owner : "";
   return [
-    trade.transactionDate ?? "",
+    group.firstDate ?? "",
+    group.lastDate ?? "",
+    trades.length,
     trade.symbol ?? "",
     typeLabel(trade.type),
-    trade.amount ?? "",
-    analyzed.chamber === "senate" ? "Senate" : "House",
+    group.amount ?? "",
+    lead.chamber === "senate" ? "Senate" : "House",
     name,
     trader.party ?? "",
     score.overallScore,
     flagLabels(score.flags).join("; "),
-    owner,
-    assetTypeLabel(trade.assetType),
+    distinct(trades.map((t) => (t.trade.owner && t.trade.owner.toLowerCase() !== "self" ? t.trade.owner : undefined))),
+    distinct(trades.map((t) => (t.trade.assetType ? assetTypeLabel(t.trade.assetType) : undefined))),
     trade.assetDescription ?? "",
-    trade.link ?? "",
+    distinct(trades.map((t) => t.trade.link), " "),
   ];
 }
 
@@ -435,33 +444,57 @@ function reasonsHtml(score: UniquenessResult): string[] {
   return out;
 }
 
-function renderPick(analyzed: AnalyzedTrade, idx: string, exchangeMap: Map<string, string>, memberLink?: MemberLinker): string {
-  const { trade, trader, score } = analyzed;
+/** "Sep 3", "Sep 3–9" or "Aug 30–Sep 2" (with the year when it isn't `thisYear`). */
+function dateSpan(first: string | undefined, last: string | undefined, thisYear?: string): string {
+  if (!first || !last || last === first) return shortDate(first, thisYear);
+  if (first.slice(0, 7) === last.slice(0, 7)) {
+    return shortDate(first, thisYear).replace(/^(\S+ \d+)/, `$1–${+last.slice(8, 10)}`);
+  }
+  const sameYear = first.slice(0, 4) === last.slice(0, 4);
+  return `${shortDate(first, sameYear ? first.slice(0, 4) : thisYear)}–${shortDate(last, thisYear)}`;
+}
+
+/** The individual trades behind a grouped entry, for its details panel. */
+function lotsTableHtml(group: TradeGroup): string {
+  const showType = group.trades.some(({ trade }) => trade.assetType);
+  const rows = group.trades.map(({ trade }) => {
+    const owner = trade.owner && trade.owner.toLowerCase() !== "self" ? ownerCode(trade.owner).code : "Self";
+    return `<tr><td>${esc(shortDate(trade.transactionDate, THIS_YEAR))}</td><td>${amountHtml(trade.amount)}</td><td>${esc(owner)}</td>` +
+      `${showType ? `<td>${esc(assetTypeLabel(trade.assetType))}</td>` : ""}<td>${trade.link ? `<a href="${esc(trade.link)}" target="_blank" rel="noopener noreferrer">Filing</a>` : ""}</td></tr>`;
+  }).join("");
+  return `<div class="lots-wrap"><table class="lots"><caption>Scored together as one trade</caption>` +
+    `<thead><tr><th>Traded</th><th>Amount</th><th>Owner</th>${showType ? "<th>Asset type</th>" : ""}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderPick(group: TradeGroup, idx: string, exchangeMap: Map<string, string>, memberLink?: MemberLinker): string {
+  const { lead: analyzed, trades, score } = group;
+  const { trade, trader } = analyzed;
+  const many = trades.length > 1;
   const name = `${trade.firstName ?? ""} ${trade.lastName ?? ""}`.trim();
   const memberUrl = memberLink?.(trade) ?? null;
   const nameHtml = memberUrl ? `<a href="${esc(memberUrl)}">${esc(name)}</a>` : esc(name);
   const ex = score.explanation;
   const reasons = reasonsHtml(score);
   const facts: Array<[string, string]> = [
-    ["Traded", esc(shortDate(trade.transactionDate, "any") || "Unknown")],
-    ["Reported amount", esc(trade.amount || "Not given")],
+    ["Traded", esc(dateSpan(group.firstDate, group.lastDate, "any") || "Unknown")],
+    [many ? "Reported amounts, added up" : "Reported amount", esc(group.amount || "Not given") + (many ? ` across ${trades.length} trades` : "")],
   ];
   if (typeLabel(trade.type) !== "Buy") facts.push(["Transaction", esc(typeLabel(trade.type))]);
   if (ex.marketCap && ex.marketCap.category !== "unknown") facts.push(["Company size", `${capText(ex.marketCap.value)} (${esc(ex.marketCap.category)} cap)`]);
   if (ex.rarity) facts.push(["Congress trades in it", `${ex.rarity.totalCongressTrades} by ${ex.rarity.uniqueTraders} member${ex.rarity.uniqueTraders === 1 ? "" : "s"}`]);
   if (ex.conviction) facts.push(["Their usual trade", `${esc(shortAmount(`$${Math.round(ex.conviction.averageSize)}`))}, this one ${ex.conviction.multiplier.toFixed(1)}×`]);
   if (ex.committeeRelevance?.overlappingCommittees.length) facts.push(["Committees", committeeAbbrs(ex.committeeRelevance.overlappingCommittees)]);
-  if (trade.assetType) facts.push(["Asset type", esc(assetTypeLabel(trade.assetType))]);
-  if (trade.source === "ocr") facts.push(["Source", "Read from a scanned paper filing, so check it against the original"]);
+  if (!many && trade.assetType) facts.push(["Asset type", esc(assetTypeLabel(trade.assetType))]);
+  if (trades.some((t) => t.trade.source === "ocr")) facts.push(["Source", "Read from a scanned paper filing, so check it against the original"]);
   const chart = trade.symbol ? tradingViewUrl(trade.symbol, exchangeMap.get(trade.symbol)) : null;
 
   return `
-<li class="pick trade-card" data-ticker="${trade.symbol ? 1 : 0}">
+<li class="pick trade-card${many ? " grouped" : ""}" data-ticker="${trade.symbol ? 1 : 0}">
   <div class="pick-main">
     <div class="score" title="Uniqueness score ${score.overallScore} of 100"><b>${score.overallScore}</b><span class="track"><i style="width:${Math.min(100, Math.max(0, score.overallScore))}%"></i></span></div>
     <div class="asset">${trade.symbol ? `<span class="tick">${symbolHtml(trade, exchangeMap)}</span>` : `${symbolHtml(trade, exchangeMap)} `}<span class="name">${esc(tidyAsset(trade.assetDescription))}</span></div>
     <div class="who">${nameHtml} ${partyTagHtml(trader.party)}<small>${analyzed.chamber === "senate" ? "Senate" : "House"}</small></div>
-    <div class="amt">${amountHtml(trade.amount)}<small>${sideLabel(trade.type) === "Bought" ? "" : `<span class="side-note">${sideLabel(trade.type)}</span> `}${esc(shortDate(trade.transactionDate, THIS_YEAR))}</small></div>
+    <div class="amt">${amountHtml(group.amount)}<small>${sideLabel(trade.type) === "Bought" ? "" : `<span class="side-note">${sideLabel(trade.type)}</span>${many ? " · " : " "}`}${many ? `<span class="lot-count">${trades.length} trades</span>, ` : ""}${esc(dateSpan(group.firstDate, group.lastDate, THIS_YEAR))}</small></div>
     <button class="more" type="button" aria-expanded="false" aria-controls="${idx}" aria-label="Details for ${esc(trade.symbol || tidyAsset(trade.assetDescription))}">
       <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
     </button>
@@ -469,8 +502,9 @@ function renderPick(analyzed: AnalyzedTrade, idx: string, exchangeMap: Map<strin
   </div>
   <div class="pick-detail" id="${idx}">
     <dl>${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    ${many ? lotsTableHtml(group) : ""}
     <div class="links">
-      ${trade.link ? `<a href="${esc(trade.link)}" target="_blank" rel="noopener noreferrer">Open the filing</a>` : ""}
+      ${!many && trade.link ? `<a href="${esc(trade.link)}" target="_blank" rel="noopener noreferrer">Open the filing</a>` : ""}
       ${memberUrl ? `<a href="${esc(memberUrl)}">All of ${esc(name)}'s trades</a>` : ""}
       ${chart ? `<a href="${esc(chart)}" target="_blank" rel="noopener noreferrer">Chart</a>` : ""}
     </div>
@@ -550,6 +584,12 @@ const REPORT_CSS = `
   .pick-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1.25rem; margin: 0; font-size: 0.9rem; max-width: 46rem; }
   .pick-detail dt { color: var(--muted); }
   .pick-detail dd { margin: 0; }
+  .amt .lot-count { color: var(--ink); }
+  .lots-wrap { overflow-x: auto; }
+  .lots { margin-top: 0.9rem; border-collapse: collapse; font-size: 0.88rem; max-width: 46rem; }
+  .lots caption { text-align: left; color: var(--muted); padding-bottom: 0.3rem; }
+  .lots th { text-align: left; font-weight: 600; color: var(--muted); }
+  .lots th, .lots td { padding: 0.25rem 1rem 0.25rem 0; border-bottom: 1px solid var(--line); }
   .pick-detail .links { margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.9rem; }
   .ranked-foot { border-top: 1px solid var(--line); padding: 0.9rem 0; color: var(--muted); font-size: 0.88rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
   .ranked-foot button { background: none; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.86rem; }
@@ -788,10 +828,21 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 const MAX_PER_FILER = 5;
 
 function freshHtml(
-  newly: Array<{ trade: FMPTrade; party: string | undefined }>,
+  newlyItems: Array<{ trade: FMPTrade; party: string | undefined }>,
   previousRunLabel: string | undefined,
   memberLink: MemberLinker | undefined,
+  groupIdOf: (trade: FMPTrade) => string | undefined = () => undefined,
 ): string {
+  // Lots scored together show and count as one trade, with their amounts added up.
+  const newly = splitByGroupId(newlyItems, (n) => groupIdOf(n.trade)).map((lots) => {
+    const sorted = [...lots].sort((a, b) => (a.trade.transactionDate ?? "").localeCompare(b.trade.transactionDate ?? ""));
+    return {
+      ...sorted[0],
+      lots: sorted.length,
+      amount: sorted.length > 1 ? sumAmounts(sorted.map((l) => l.trade.amount)) ?? undefined : sorted[0].trade.amount,
+      lastDate: sorted[sorted.length - 1].trade.transactionDate,
+    };
+  });
   const since = previousRunLabel ? previousRunLabel.replace(/,\s*\d{4}$/, "") : "";
   if (!previousRunLabel) {
     return `<h1 id="fresh-h">This is the first report, so nothing is marked new yet.</h1>
@@ -811,8 +862,8 @@ function freshHtml(
     groups.get(key)!.rows.push(item);
   }
   const ordered = [...groups.values()]
-    .map((g) => ({ ...g, rows: g.rows.sort((a, b) => (b.trade.transactionDate ?? "").localeCompare(a.trade.transactionDate ?? "")) }))
-    .sort((a, b) => b.rows.length - a.rows.length || (b.rows[0].trade.transactionDate ?? "").localeCompare(a.rows[0].trade.transactionDate ?? ""));
+    .map((g) => ({ ...g, rows: g.rows.sort((a, b) => (b.lastDate ?? "").localeCompare(a.lastDate ?? "")) }))
+    .sort((a, b) => b.rows.length - a.rows.length || (b.rows[0].lastDate ?? "").localeCompare(a.rows[0].lastDate ?? ""));
 
   const sales = newly.filter((n) => sideLabel(n.trade.type) === "Sold").length;
   const buys = newly.length - sales;
@@ -825,7 +876,7 @@ function freshHtml(
     return `
       <div class="filer">
         <h2>${g.url ? `<a href="${esc(g.url)}">${esc(g.name)}</a>` : esc(g.name)} ${partyTagHtml(g.party)}<span class="count">${plural(g.rows.length, "trade")}</span></h2>
-        <ul class="filing-list">${shown.map(({ trade }) => {
+        <ul class="filing-list">${shown.map(({ trade, lots, amount, lastDate }) => {
           const side = sideLabel(trade.type);
           const phrase = trade.owner && trade.owner.toLowerCase() !== "self" ? ownerPhrase(trade.owner) : "";
           const owner = phrase ? `, ${phrase.charAt(0).toLowerCase()}${phrase.slice(1)}` : "";
@@ -833,8 +884,8 @@ function freshHtml(
           <li>
             <span class="side${side === "Sold" ? " sold" : ""}">${side}</span>
             <span class="what">${trade.symbol ? `<b>${esc(trade.symbol)}</b>` : ""}<span class="desc">${esc(tidyAsset(trade.assetDescription))}</span></span>
-            <span class="size">${amountHtml(trade.amount)}</span>
-            <span class="when">Traded ${esc(shortDate(trade.transactionDate, THIS_YEAR))}${esc(owner)}</span>
+            <span class="size">${amountHtml(amount)}</span>
+            <span class="when">${lots > 1 ? `${lots} trades, ` : "Traded "}${esc(dateSpan(trade.transactionDate, lastDate, THIS_YEAR))}${esc(owner)}</span>
           </li>`;
         }).join("")}${rest > 0 ? `
           <li class="more-filed">${g.url ? `<a href="${esc(g.url)}">${plural(rest, "more trade")}</a>` : plural(rest, "more trade")} in this batch</li>` : ""}
@@ -874,16 +925,20 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
     return !isNaN(d.getTime()) && d >= windowCutoff;
   };
 
-  const topPurchases = [...report.scoredTrades]
-    .filter((t) => {
-      const type = (t.trade.type || "").toLowerCase();
-      return (type.includes("purchase") || type.includes("exchange")) && isWithinWindow(t);
+  // Rank groups, so a purchase split into several lots shows once. A group
+  // counts as recent when any of its trades falls in the window.
+  const recentGroups = collectGroups(report.scoredTrades).filter((g) => g.trades.some(isWithinWindow));
+
+  const topPurchases = recentGroups
+    .filter((g) => {
+      const type = (g.lead.trade.type || "").toLowerCase();
+      return type.includes("purchase") || type.includes("exchange");
     })
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 30);
 
-  const committeeRelevant = [...report.scoredTrades]
-    .filter((t) => t.score.flags.hasCommitteeRelevance && isWithinWindow(t))
+  const committeeRelevant = recentGroups
+    .filter((g) => g.score.flags.hasCommitteeRelevance)
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 20);
 
@@ -926,7 +981,7 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
     indexUrl ? `<li><a href="${esc(indexUrl)}"><span>All past reports</span><span class="n">${runs.length || ""}</span></a></li>` : "",
   ].join("");
 
-  const rankedList = (key: string, list: AnalyzedTrade[], emptyText: string) => `
+  const rankedList = (key: string, list: TradeGroup[], emptyText: string) => `
       <ol class="ranked" data-list="${key}"${key === "top" ? "" : " hidden"}>${list.map((t, i) => renderPick(t, `pick-${key}-${i}`, exchangeMap, memberLink)).join("")}
         <li class="empty"${list.length ? " hidden" : ""}>${emptyText}</li>
       </ol>`;
@@ -946,7 +1001,7 @@ ${siteHeader(indexUrl ?? "#", picker)}
 <main>
   <section class="fresh-band" aria-labelledby="fresh-h">
     <div class="wrap fresh">
-      ${freshHtml(newly, previousRunLabel, memberLink)}
+      ${freshHtml(newly, previousRunLabel, memberLink, (t) => scoreLookup.get(tradeKey(t))?.groupId)}
       ${newChecks ? `<p class="fresh-check"><a href="#checks">${newChecks === 1 ? "One thing" : `${numberWord(newChecks)} things`} in these new trades could not be confirmed</a></p>` : ""}
     </div>
   </section>

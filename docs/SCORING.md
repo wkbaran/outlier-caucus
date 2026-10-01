@@ -18,6 +18,19 @@ Overall = MarketCap × 0.20 + Conviction × 0.25 + Rarity × 0.25
 
 The report's tags come from the same factors: **Rare** means a rarity score of 50 or more, **Large** a conviction score of 50 or more (1.5× their usual trade), and **Small cap** a market cap score of 50 or more (under $2B).
 
+## Grouped trades
+
+Members often split one decision into several line items: three lots of the same stock on the same day, or the same fund bought through two accounts. A member's trades in one asset on the same side (bought, sold or exchanged) are scored as a single trade when each falls on the same day as the one before. `report:html --group-gap-days <n>` widens that to trades at most n days apart. The asset is the ticker or, for a trade with no ticker, its description matched exactly apart from case and spacing, so two different bond issues never merge.
+
+A group counts as one trade everywhere:
+
+- Its size is the lots' ranges added up ("$1,001 - $15,000" three times is "$3,003 - $45,000").
+- The member's usual trade size is averaged over their groups, not their lots. Otherwise a member who always buys in several lots would look like they always trade far above their usual size.
+- Rarity counts the group once, so one member's six lots don't make a stock look traded six times.
+- Derivative and ownership use the lot that scores highest, so one lot through a spouse's account makes the group indirect.
+
+Every trade in a group carries the group's score. The report ranks the group as one entry, with the lots listed in its details, and the count of new trades since the last report counts it once.
+
 The weights and thresholds live in `DEFAULT_SCORING_CONFIG` in `src/scoring/types.ts`. The scorer is `src/scoring/uniqueness-scorer.ts`, a pure function with no I/O.
 
 ## Market cap
@@ -36,7 +49,7 @@ Smaller companies get less analyst coverage, so a member's trade in one is more 
 
 ## Conviction
 
-Compares the trade to the member's own history. Disclosures give a range, so the trade size is the range's midpoint ("$15,001 - $50,000" is $32,500), and the member's average is taken over all their trades on file.
+Compares the trade to the member's own history. Disclosures give a range, so the trade size is the range's midpoint ("$15,001 - $50,000" is $32,500), and the member's average is taken over all their trades on file, a [group](#grouped-trades) counting as one trade of its total size.
 
 | Trade size vs. their average | Score |
 |---|---|
@@ -48,7 +61,7 @@ Compares the trade to the member's own history. Disclosures give a range, so the
 
 ## Rarity
 
-Counts how many times Congress has traded the stock across the whole dataset.
+Counts how many times Congress has traded the stock across the whole dataset, a [group](#grouped-trades) counting once.
 
 | Congressional trades in it | Score |
 |---|---|

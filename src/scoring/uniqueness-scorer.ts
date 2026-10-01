@@ -236,7 +236,7 @@ function scoreCommitteeRelevance(
 /**
  * Score based on asset type - derivatives indicate timing sensitivity
  */
-function scoreDerivative(trade: TradeInput): number {
+export function scoreDerivative(trade: TradeInput): number {
   if (!trade.assetType) {
     return 0;
   }
@@ -262,7 +262,7 @@ function scoreDerivative(trade: TradeInput): number {
 /**
  * Score based on ownership - indirect ownership may indicate distancing
  */
-function scoreOwnership(trade: TradeInput): number {
+export function scoreOwnership(trade: TradeInput): number {
   if (!trade.owner) {
     return 0;
   }

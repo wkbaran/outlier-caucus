@@ -3,6 +3,9 @@ import type { FMPTrade } from "../types/index.js";
 import type { UniquenessResult } from "../scoring/types.js";
 import { filingDateIso } from "../utils/filing-date.js";
 import type { AttentionItem } from "./attention.js";
+import { amountRange, collectGroups, splitByGroupId, sumAmounts, tradeSide as side } from "../services/trade-groups.js";
+
+export { amountRange };
 import { COMMITTEE_NAMES, FLAG_DESCRIPTIONS, buildScoreLookup, tradeKey, type MemberLinker } from "./html.js";
 
 // The agent-readable brief: what one report newly disclosed, scored, as JSON.
@@ -34,23 +37,11 @@ export interface BriefOptions {
   reviewedHidden?: number;
 }
 
+function gapPhrase(days: number): string {
+  return days === 0 ? "on the same day" : `with at most ${days} day${days === 1 ? "" : "s"} between them`;
+}
+
 const round = (v: number, dp = 0) => Math.round(v * 10 ** dp) / 10 ** dp;
-
-function side(type: string | undefined): "purchase" | "sale" | "exchange" | "other" {
-  const t = (type ?? "").toLowerCase();
-  if (t.includes("purchase")) return "purchase";
-  if (t.includes("sale")) return "sale";
-  if (t.includes("exchange")) return "exchange";
-  return "other";
-}
-
-/** "$1,001 - $15,000" → {low: 1001, high: 15000}; "Over $50,000,000" → {low: 50000000, high: null}. */
-export function amountRange(amount: string | undefined): { low: number | null; high: number | null } {
-  const nums = (amount ?? "").match(/\$[\d,]+/g)?.map((n) => Number(n.replace(/[$,]/g, ""))) ?? [];
-  if (!nums.length) return { low: null, high: null };
-  if (/over/i.test(amount ?? "")) return { low: nums[0], high: null };
-  return { low: nums[0], high: nums[1] ?? nums[0] };
-}
 
 function daysBetween(from: string | undefined | null, to: string | null): number | null {
   if (!from || !to) return null;
@@ -124,6 +115,35 @@ function tradeEntry(
 
 export type BriefTrade = ReturnType<typeof tradeEntry>;
 
+/**
+ * A ranked entry: the group's first trade, with the amount replaced by the
+ * group's total and the individual trades listed. A trade scored on its own
+ * comes out as a group of one.
+ */
+function groupEntry(lots: FMPTrade[], lookup: (t: FMPTrade) => AnalyzedTrade | undefined, opts: BriefOptions) {
+  const sorted = [...lots].sort((a, b) => (a.transactionDate ?? "").localeCompare(b.transactionDate ?? ""));
+  const many = sorted.length > 1;
+  const amount = many ? sumAmounts(sorted.map((t) => t.amount)) : sorted[0].amount ?? null;
+  return {
+    ...tradeEntry(sorted[0], lookup(sorted[0]), opts),
+    amount,
+    amountRange: amountRange(amount),
+    tradeCount: sorted.length,
+    lastTransactionDate: sorted[sorted.length - 1].transactionDate ?? null,
+    trades: many
+      ? sorted.map((trade) => ({
+          transactionDate: trade.transactionDate ?? null,
+          amount: trade.amount ?? null,
+          amountRange: amountRange(trade.amount),
+          owner: trade.owner ?? null,
+          assetType: trade.assetType ?? null,
+          filedDate: filingDateIso(trade),
+          filing: trade.link ?? null,
+        }))
+      : [],
+  };
+}
+
 /** Tickers that two or more members traded in this batch of disclosures. */
 function clusters(entries: BriefTrade[]) {
   const bySymbol = new Map<string, BriefTrade[]>();
@@ -145,11 +165,11 @@ function clusters(entries: BriefTrade[]) {
 export function buildBrief(opts: BriefOptions) {
   const { report } = opts;
   const scoreLookup = buildScoreLookup(report);
-  const entry = (t: FMPTrade) => tradeEntry(t, scoreLookup.get(tradeKey(t)), opts);
+  const lookup = (t: FMPTrade) => scoreLookup.get(tradeKey(t));
 
-  const newFilings = opts.trades
-    .filter(opts.isNewlyDisclosed)
-    .map(entry)
+  // Lots scored together are one entry, as they are on the report page.
+  const newFilings = splitByGroupId(opts.trades.filter(opts.isNewlyDisclosed), (t) => lookup(t)?.groupId)
+    .map((lots) => groupEntry(lots, lookup, opts))
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || (b.filedDate ?? "").localeCompare(a.filedDate ?? ""));
 
   const count = (s: string) => newFilings.filter((e) => e.side === s).length;
@@ -157,11 +177,12 @@ export function buildBrief(opts: BriefOptions) {
 
   const cutoff = new Date(report.generatedAt);
   cutoff.setDate(cutoff.getDate() - opts.topWindowDays);
-  const topPurchases = report.scoredTrades
-    .filter((t) => side(t.trade.type) === "purchase" && t.trade.transactionDate && new Date(t.trade.transactionDate) >= cutoff)
+  const topPurchases = collectGroups(report.scoredTrades)
+    .filter((g) => side(g.lead.trade.type) === "purchase" &&
+      g.trades.some((t) => t.trade.transactionDate && new Date(t.trade.transactionDate) >= cutoff))
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 10)
-    .map((t) => tradeEntry(t.trade, t, opts));
+    .map((g) => groupEntry(g.trades.map((t) => t.trade), lookup, opts));
 
   return {
     schema: BRIEF_SCHEMA,
@@ -184,7 +205,8 @@ export function buildBrief(opts: BriefOptions) {
       reports: "manifest.json",
     },
     glossary: {
-      newFilings: "Trades this service first found after the previous report ran (newSince.foundAfter); trades stored before that was recorded count as new when filed after newSince.filedAfter. Highest score first. Empty, with newSince null, on the first report.",
+      newFilings: "Trades this service first found after the previous report ran (newSince.foundAfter); trades stored before that was recorded count as new when filed after newSince.filedAfter. Highest score first, with lots scored together as one entry (see tradeCount). Empty, with newSince null, on the first report.",
+      tradeCount: `A member's trades in one stock on the same side ${gapPhrase(report.config?.grouping?.maxGapDays ?? 0)} are scored as one trade and listed as one entry. tradeCount says how many there were, trades lists each one (empty for a single trade), amount and amountRange are their total, and transactionDate to lastTransactionDate is their span.`,
       score: "Uniqueness score, 0 to 100: a weighted blend of company size, trade size against the member's usual, how rarely Congress trades the asset, committee oversight of its sector, derivatives, and indirect ownership. null when the trade could not be scored.",
       flags: Object.fromEntries(Object.entries(FLAG_DESCRIPTIONS).map(([k, v]) => [k, v.title])),
       reasons: "The flags spelled out with the numbers behind them.",
@@ -196,7 +218,7 @@ export function buildBrief(opts: BriefOptions) {
       tickerCheck: "For scanned filings, how the ticker held up against the SEC's lists of listed companies and funds: verified (the company name matches), fund (a fund or ETF symbol, which the SEC lists without names), corrected (the ticker read was wrong and the company name gave the right one), found-by-name (no ticker on the filing; matched by company name), name-mismatch (a listed ticker for a differently named company, kept because the filing writes it), unknown-symbol (not a listed company or fund). null for electronic filings or trades not yet checked.",
       clusters: "Tickers that two or more members traded among the new filings.",
       attention: "Things the run couldn't resolve on its own, those touching this report's new trades first, each with the steps to fix it before the next run: scanned filings that failed or read poorly (trades may be missing or wrong), scanned filings still waiting for OCR (trades missing), and stock names without a confirmed ticker (no company size, sector or committee score). Commands run from the project directory; in the Docker deployment prefix them with docker exec outlier-caucus. Each item has a key; attention:review <key> marks it reviewed, which hides it until the problem changes (summary.reviewedHidden counts those).",
-      topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context.`,
+      topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context, with lots scored together as one entry (see tradeCount).`,
     },
     summary: {
       newTrades: newFilings.length,

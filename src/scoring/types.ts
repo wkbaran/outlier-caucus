@@ -197,6 +197,14 @@ export interface ScoringConfig {
     derivative: number;
     ownership: number;
   };
+
+  /**
+   * A member's trades in one stock on the same side are scored and ranked as one
+   * when each falls within this many days of the one before (0 = same day only).
+   */
+  grouping: {
+    maxGapDays: number;
+  };
 }
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
@@ -221,5 +229,8 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     committeeRelevance: 0.15,
     derivative: 0.10,
     ownership: 0.05,
+  },
+  grouping: {
+    maxGapDays: 0,
   },
 };

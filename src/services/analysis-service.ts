@@ -14,7 +14,7 @@ import type {
   UniquenessResult,
   ScoringConfig,
 } from "../scoring/types.js";
-import { scoreTrade, DEFAULT_SCORING_CONFIG } from "../scoring/index.js";
+import { scoreTrade, scoreDerivative, scoreOwnership, DEFAULT_SCORING_CONFIG } from "../scoring/index.js";
 import type { MarketDataProvider } from "../data/types.js";
 import { CongressionalPatternAnalyzer } from "../data/pattern-analyzer.js";
 import { createSectorMap } from "../data/sector-map.js";
@@ -25,6 +25,7 @@ import {
   buildPartyMap,
 } from "./committee-service.js";
 import { saveReport } from "../utils/storage.js";
+import { groupBy, tradeGroupKey } from "./trade-groups.js";
 
 // ============================================
 // Types for analysis results
@@ -35,6 +36,12 @@ export interface AnalyzedTrade {
   chamber: "senate" | "house";
   trader: TraderInput;
   score: UniquenessResult;
+  /**
+   * Set when this trade was scored together with others by the same member in
+   * the same stock (see trade-groups.ts); the score is the group's. Absent for
+   * a trade scored on its own.
+   */
+  groupId?: string;
 }
 
 export interface AnalysisReport {
@@ -98,6 +105,27 @@ function toTradeInput(trade: FMPTrade): TradeInput {
 }
 
 /**
+ * One TradeInput standing for a group of trades: amounts added up, and the
+ * asset type and owner that score highest, so a group made through a spouse's
+ * account or with options reads that way.
+ */
+function combineTradeInputs(trades: FMPTrade[]): TradeInput {
+  const inputs = trades.map(toTradeInput);
+  if (inputs.length === 1) return inputs[0];
+  const amounts = inputs.map((i) => i.amount).filter((a): a is { low: number; high: number } => a !== null);
+  const highest = (score: (t: TradeInput) => number) =>
+    inputs.reduce((best, t) => (score(t) > score(best) ? t : best));
+  return {
+    ...inputs[0],
+    amount: amounts.length
+      ? { low: amounts.reduce((n, a) => n + a.low, 0), high: amounts.reduce((n, a) => n + a.high, 0) }
+      : null,
+    assetType: highest(scoreDerivative).assetType,
+    owner: highest(scoreOwnership).owner,
+  };
+}
+
+/**
  * Strip middle initials (e.g. "David J." -> "david") so a member whose disclosure
  * forms inconsistently include a middle initial still groups into one trader
  * history — otherwise their trade history/conviction scoring silently fragments
@@ -132,6 +160,20 @@ export async function analyzeTrades(
   marketDataProvider: MarketDataProvider | null,
   config: ScoringConfig = DEFAULT_SCORING_CONFIG
 ): Promise<AnalysisReport> {
+  const report = await buildAnalysis(senateTrades, houseTrades, committeeData, marketDataProvider, config);
+  const reportPath = await saveReport("unique-trades", report);
+  console.log(`\nReport saved to ${reportPath}`);
+  return report;
+}
+
+/** Score every trade, without saving the result. */
+export async function buildAnalysis(
+  senateTrades: FMPTrade[],
+  houseTrades: FMPTrade[],
+  committeeData: CommitteeData | null,
+  marketDataProvider: MarketDataProvider | null,
+  config: ScoringConfig = DEFAULT_SCORING_CONFIG
+): Promise<AnalysisReport> {
   const allTrades = [
     ...senateTrades.map((t) => ({ trade: t, chamber: "senate" as const })),
     ...houseTrades.map((t) => ({ trade: t, chamber: "house" as const })),
@@ -139,11 +181,24 @@ export async function analyzeTrades(
 
   console.log(`Analyzing ${allTrades.length} total trades...`);
 
-  // Build trading pattern analyzer from all trades
-  const patternAnalyzer = new CongressionalPatternAnalyzer([
-    ...senateTrades,
-    ...houseTrades,
-  ]);
+  // A member's lots in one stock on one side, close together, count as one
+  // trade everywhere below: in their usual trade size, in how often Congress
+  // trades the stock, and in the score.
+  const maxGapDays = config.grouping?.maxGapDays ?? 0;
+  const groups = groupBy(
+    allTrades,
+    ({ trade, chamber }) => tradeGroupKey(getTraderId(trade, chamber), trade),
+    ({ trade }) => trade.transactionDate,
+    maxGapDays
+  );
+  const grouped = groups.filter((g) => g.length > 1);
+  console.log(
+    `  Grouped ${grouped.reduce((n, g) => n + g.length, 0)} trades into ${grouped.length} groups ` +
+    `(same member, stock and side, ${maxGapDays === 0 ? "same day" : `at most ${maxGapDays} days apart`})`
+  );
+
+  // Build trading pattern analyzer, counting each group once
+  const patternAnalyzer = new CongressionalPatternAnalyzer(groups.map((g) => g[0].trade));
   const patternStats = patternAnalyzer.getStats();
   console.log(
     `  Symbol stats: ${patternStats.uniqueSymbols} unique, ${patternStats.rareSymbols} rare, ${patternStats.commonSymbols} common`
@@ -158,7 +213,7 @@ export async function analyzeTrades(
     : null;
 
   // Build trader histories
-  const traderHistories = buildTraderHistories(allTrades);
+  const traderHistories = buildTraderHistories(groups);
   console.log(`  Built histories for ${traderHistories.size} traders`);
 
   // Get unique symbols for market data fetch
@@ -183,7 +238,8 @@ export async function analyzeTrades(
   console.log(`  Scoring trades...`);
   const scoredTrades: AnalyzedTrade[] = [];
 
-  for (const { trade, chamber } of allTrades) {
+  for (const group of groups) {
+    const { trade, chamber } = group[0];
     const traderId = getTraderId(trade, chamber);
     const traderHistory = traderHistories.get(traderId);
 
@@ -204,7 +260,7 @@ export async function analyzeTrades(
 
     // Score the trade
     const score = scoreTrade(
-      toTradeInput(trade),
+      combineTradeInputs(group.map((g) => g.trade)),
       trader,
       traderHistory,
       marketData,
@@ -213,12 +269,18 @@ export async function analyzeTrades(
       config
     );
 
-    scoredTrades.push({
-      trade,
-      chamber,
-      trader,
-      score,
-    });
+    const groupId = group.length > 1
+      ? `${tradeGroupKey(traderId, trade)}|${trade.transactionDate}`
+      : undefined;
+    for (const member of group) {
+      scoredTrades.push({
+        trade: member.trade,
+        chamber,
+        trader,
+        score,
+        ...(groupId ? { groupId } : {}),
+      });
+    }
   }
 
   // Sort by date descending (most recent first)
@@ -258,10 +320,6 @@ export async function analyzeTrades(
     },
   };
 
-  // Save report
-  const reportPath = await saveReport("unique-trades", report);
-  console.log(`\nReport saved to ${reportPath}`);
-
   return report;
 }
 
@@ -269,21 +327,27 @@ export async function analyzeTrades(
 // Helper functions
 // ============================================
 
+/**
+ * Each member's history, with a group of trades counted as one trade of their
+ * combined size. Averaging single lots instead would make a member who always
+ * buys in several lots look like they always trade far above their usual size.
+ */
 function buildTraderHistories(
-  trades: { trade: FMPTrade; chamber: "senate" | "house" }[]
+  groups: { trade: FMPTrade; chamber: "senate" | "house" }[][]
 ): Map<string, TraderHistory> {
   const histories = new Map<string, TraderHistory>();
 
   // Group trades by trader
   const traderTrades = new Map<string, TradeInput[]>();
 
-  for (const { trade, chamber } of trades) {
+  for (const group of groups) {
+    const { trade, chamber } = group[0];
     const traderId = getTraderId(trade, chamber);
 
     if (!traderTrades.has(traderId)) {
       traderTrades.set(traderId, []);
     }
-    traderTrades.get(traderId)!.push(toTradeInput(trade));
+    traderTrades.get(traderId)!.push(combineTradeInputs(group.map((g) => g.trade)));
   }
 
   // Build histories

@@ -4,6 +4,7 @@ import * as path from "path";
 import { loadTrades, fetchTrades, getDefaultTargetDate } from "../services/trade-service.js";
 import { loadCommitteeData, fetchAllCommitteeData, buildPartyMap, findMemberByName, getMemberParty } from "../services/committee-service.js";
 import { analyzeTrades } from "../services/analysis-service.js";
+import { DEFAULT_SCORING_CONFIG } from "../scoring/index.js";
 import type { AnalysisReport } from "../services/analysis-service.js";
 import { createFMPProvider } from "../data/fmp-provider.js";
 import { createFMPClient } from "../services/fmp-client.js";
@@ -27,7 +28,8 @@ function createMarketDataProvider(cacheOnly: boolean) {
   }
   return createEdgarProvider(cacheOnly);
 }
-import { buildHtmlReport, buildPartyPage, buildMemberPage, buildScoreLookup, type MemberLinker } from "../output/html.js";
+import { buildHtmlReport, buildPartyPage, buildMemberPage, buildScoreLookup, tradeKey, type MemberLinker } from "../output/html.js";
+import { splitByGroupId } from "../services/trade-groups.js";
 import { createMemberResolver } from "../output/member-identity.js";
 import { buildIndexPage, buildHomePage, loadManifest, upsertManifest, rebuildManifest, previousFilingBaseline, previousRanAt } from "../output/index-page.js";
 import type { ManifestSymbol, ReportManifestEntry } from "../output/index-page.js";
@@ -92,6 +94,7 @@ export const reportHtmlCommand = new Command("report:html")
   .option("--rebuild-index", "Rebuild archive.html and index.html from the manifest (prunes deleted reports) without generating a new report")
   .option("--skip-unchanged", "Skip generating and publishing if fetching found no new trades since the last run (for scheduled/automated runs)")
   .option("--top-window-days <days>", "Only rank trades from this many days back for Top Purchases / Committee-Relevant", "30")
+  .option("--group-gap-days <days>", "Score a member's trades in one stock on the same side as one when each is at most this many days after the last (0 = same day only)", "0")
   .option("--publish", "Sync output/web to S3 and invalidate CloudFront after generating")
   .option("--bucket <name>", "S3 bucket name (or set S3_BUCKET env var)")
   .option("--region <region>", "AWS region (default: us-east-1 or AWS_REGION env var)")
@@ -106,6 +109,11 @@ export const reportHtmlCommand = new Command("report:html")
         process.exit(1);
       }
 
+      const groupGapDays = Number(options.groupGapDays);
+      if (!Number.isInteger(groupGapDays) || groupGapDays < 0) {
+        console.error(`❌ --group-gap-days must be a whole number of days, 0 or more (got "${options.groupGapDays}")`);
+        process.exit(1);
+      }
       const topWindowDays = parseInt(options.topWindowDays as string, 10);
       if (isNaN(topWindowDays) || topWindowDays <= 0) {
         console.error(`❌ --top-window-days must be a positive integer (got "${options.topWindowDays}")`);
@@ -226,7 +234,8 @@ export const reportHtmlCommand = new Command("report:html")
           tradeData.senateTrades,
           tradeData.houseTrades,
           committeeData,
-          marketDataProvider
+          marketDataProvider,
+          { ...DEFAULT_SCORING_CONFIG, grouping: { maxGapDays: groupGapDays } }
         );
       }
 
@@ -285,6 +294,10 @@ export const reportHtmlCommand = new Command("report:html")
 
       const newlyDisclosed = allTrades.filter(isNewlyDisclosed);
 
+      // A member's lots in one stock scored together count as one new trade.
+      const scoreLookup = buildScoreLookup(report);
+      const newTradeCount = splitByGroupId(newlyDisclosed, (t) => scoreLookup.get(tradeKey(t))?.groupId).length;
+
       // ── What this run couldn't resolve, with how to fix it ───────────────
       const ocrResults = await loadOcrResults();
       const { open: attention, hidden: reviewedAttention } = splitReviewed(buildAttention({
@@ -297,7 +310,8 @@ export const reportHtmlCommand = new Command("report:html")
       }), await loadReviewed());
       console.log(
         hasPrevious
-          ? `   Newly disclosed since the previous report: ${newlyDisclosed.length} trade${newlyDisclosed.length !== 1 ? "s" : ""}`
+          ? `   Newly disclosed since the previous report: ${newTradeCount} trade${newTradeCount !== 1 ? "s" : ""}` +
+            (newTradeCount !== newlyDisclosed.length ? ` (${newlyDisclosed.length} line items)` : "")
           : "   No previous report in manifest - nothing marked new this run"
       );
 
@@ -330,8 +344,6 @@ export const reportHtmlCommand = new Command("report:html")
 
       // Legacy field: kept populated so anything still reading it keeps working.
       const topSymbols = newSymbols.map((c) => c.symbol);
-
-      const scoreLookup = buildScoreLookup(report);
 
       const allPartyTrades = [...purchaseTrades, ...salesTrades]
         .sort((a, b) => (b.trade.transactionDate ?? "").localeCompare(a.trade.transactionDate ?? ""));
@@ -426,7 +438,7 @@ export const reportHtmlCommand = new Command("report:html")
       // The picker and chart list every run including this one, which is not
       // in the manifest until after the report is written.
       const runs = [
-        { date: dateStr, label: runDateLabel, file: reportRelPath, newTrades: hasPrevious ? newlyDisclosed.length : undefined },
+        { date: dateStr, label: runDateLabel, file: reportRelPath, newTrades: hasPrevious ? newTradeCount : undefined },
         ...priorManifest.filter((e) => e.date !== dateStr).map((e) => ({ date: e.date, label: e.dateLabel, file: e.file, newTrades: e.newTrades })),
       ]
         .sort((a, b) => b.date.localeCompare(a.date))
@@ -485,7 +497,7 @@ export const reportHtmlCommand = new Command("report:html")
         totalTrades: report.totalTradesAnalyzed,
         topSymbols,
         newSymbols,
-        newTrades: newlyDisclosed.length,
+        newTrades: newTradeCount,
         ...(runMaxFiling ? { maxFilingDate: runMaxFiling } : {}),
         ranAt,
       });
