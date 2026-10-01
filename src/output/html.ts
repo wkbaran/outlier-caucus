@@ -4,7 +4,7 @@ import type { UniquenessResult } from "../scoring/types.js";
 import { SENATE_COMMITTEE_TAXONOMY, HOUSE_COMMITTEE_TAXONOMY } from "../data/committee-sector-taxonomy.js";
 import { memberKey } from "./member-identity.js";
 import type { AttentionItem } from "./attention.js";
-import { collectGroups, splitByGroupId, sumAmounts, type TradeGroup } from "../services/trade-groups.js";
+import { collectGroups, splitByGroupId, sumAmounts, tradeSide, type TradeGroup } from "../services/trade-groups.js";
 import { HTML_OPEN, THEME_JS, themeHead, siteHeader, shortDate, shortAmount, tidyAsset } from "./theme.js";
 
 /** Returns the member page filename for a trade's filer, or null if no page exists */
@@ -474,6 +474,16 @@ function lotsTableHtml(group: TradeGroup): string {
     `<thead><tr><th>Traded</th><th>Amount</th><th>Owner</th>${showType ? "<th>Asset type</th>" : ""}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+const RANK_SIDES = ["purchase", "sale"] as const;
+type RankSide = (typeof RANK_SIDES)[number];
+const SIDE_WORDS: Record<RankSide | "both", string> = { purchase: "purchases", sale: "sales", both: "trades" };
+
+/** Which side of the ranking a trade sits on; exchanges rank with purchases. Null for anything else. */
+function rankSide(trade: FMPTrade): RankSide | null {
+  const side = tradeSide(trade.type);
+  return side === "sale" ? "sale" : side === "purchase" || side === "exchange" ? "purchase" : null;
+}
+
 function renderPick(group: TradeGroup, idx: string, exchangeMap: Map<string, string>, memberLink?: MemberLinker): string {
   const { lead: analyzed, trades, score } = group;
   const { trade, trader } = analyzed;
@@ -497,7 +507,7 @@ function renderPick(group: TradeGroup, idx: string, exchangeMap: Map<string, str
   const chart = trade.symbol ? tradingViewUrl(trade.symbol, exchangeMap.get(trade.symbol)) : null;
 
   return `
-<li class="pick trade-card${many ? " grouped" : ""}" data-ticker="${trade.symbol ? 1 : 0}">
+<li class="pick trade-card${many ? " grouped" : ""}" data-ticker="${trade.symbol ? 1 : 0}" data-side="${rankSide(trade) ?? "purchase"}">
   <div class="pick-main">
     <div class="score" title="Uniqueness score ${score.overallScore} of 100"><b>${score.overallScore}</b><span class="track"><i style="width:${Math.min(100, Math.max(0, score.overallScore))}%"></i></span></div>
     <div class="asset">${trade.symbol ? `<span class="tick">${symbolHtml(trade, exchangeMap)}</span>` : `${symbolHtml(trade, exchangeMap)} `}<span class="name">${esc(tidyAsset(trade.assetDescription))}</span></div>
@@ -555,6 +565,24 @@ const REPORT_CSS = `
   .band-head { display: flex; align-items: end; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
   .band-head h2 { font-size: 1.6rem; font-weight: 600; font-stretch: 85%; letter-spacing: -0.01em; }
   .band-head p { margin-top: 0.2rem; color: var(--sub); max-width: 58ch; font-size: 0.95rem; }
+  /* "Most unusual [purchases]": a select that reads as the heading's last word */
+  .side-pick { position: relative; display: inline-block; }
+  .side-pick select, .side-probe {
+    font: inherit; letter-spacing: inherit; font-stretch: inherit;
+  }
+  .side-pick select {
+    appearance: none; -webkit-appearance: none; background: none; color: inherit; border: 0; border-radius: 0;
+    padding: 0 1.1em 0.04em 0; margin: 0; cursor: pointer; box-sizing: content-box;
+    border-bottom: 2px solid var(--signal);
+  }
+  .side-pick::after {
+    content: ""; position: absolute; right: 0.15em; top: 50%; width: 0.38em; height: 0.38em; margin-top: -0.3em;
+    border-right: 2px solid var(--signal); border-bottom: 2px solid var(--signal); transform: rotate(45deg); pointer-events: none;
+  }
+  .side-pick select:hover, .side-pick select:focus-visible { color: var(--signal); }
+  .side-pick select:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+  .side-pick option { font-size: 1rem; background: var(--raised); color: var(--ink); }
+  .side-probe { position: absolute; visibility: hidden; white-space: pre; left: 0; top: 0; }
   .views { display: flex; gap: 0.5rem 0.75rem; flex-wrap: wrap; align-items: center; }
   .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px; }
   .seg button { background: none; border: 0; border-radius: 999px; padding: 0.3rem 0.85rem; font-size: 0.86rem; color: var(--sub); white-space: nowrap; }
@@ -695,7 +723,8 @@ const REPORT_JS = `
   }
 
   // Most unusual: which list, ticker filter, show more, expand
-  var PAGE = 10, shown = PAGE, view = 'top';
+  var PAGE = 10, shown = PAGE, view = 'top', side = 'purchase';
+  var sidePick = document.getElementById('unusual-side');
   var views = document.querySelectorAll('[data-view]');
   var lists = document.querySelectorAll('[data-list]');
   var tickerOnly = document.getElementById('ticker-only');
@@ -709,14 +738,16 @@ const REPORT_JS = `
       list.hidden = !active;
       if (!active) return;
       list.querySelectorAll('.pick').forEach(function (li) {
-        var ok = !(tickerOnly && tickerOnly.checked && li.dataset.ticker === '0');
+        var ok = (side === 'both' || li.dataset.side === side) &&
+          !(tickerOnly && tickerOnly.checked && li.dataset.ticker === '0');
         if (ok) total++;
         li.hidden = !ok || total > shown;
         if (!li.hidden) visible++;
       });
       var empty = list.querySelector('.empty');
-      if (empty) empty.hidden = total > 0;
+      if (empty) { empty.hidden = total > 0; empty.textContent = empty.dataset[side]; }
     });
+    if (csv) csv.dataset.csvSection = view + '-' + side;
     if (count) count.textContent = total ? 'Showing ' + visible + ' of ' + total : '';
     if (more) more.hidden = visible >= total;
   }
@@ -724,10 +755,32 @@ const REPORT_JS = `
     b.addEventListener('click', function () {
       view = b.dataset.view; shown = PAGE;
       views.forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
-      if (csv) csv.dataset.csvSection = b.dataset.csv;
       render();
     });
   });
+  // The side picker reads as the heading's last word, so it is sized to the
+  // option showing rather than the longest one.
+  function fitSide() {
+    var probe = document.createElement('span');
+    probe.className = 'side-probe';
+    probe.textContent = sidePick.options[sidePick.selectedIndex].text;
+    sidePick.parentNode.appendChild(probe);
+    sidePick.style.width = Math.ceil(probe.getBoundingClientRect().width) + 'px';
+    probe.remove();
+  }
+  if (sidePick) {
+    try {
+      var savedSide = localStorage.getItem('unusual-side');
+      if (savedSide && sidePick.querySelector('option[value="' + savedSide + '"]')) sidePick.value = savedSide;
+    } catch (e) {}
+    side = sidePick.value;
+    sidePick.addEventListener('change', function () {
+      side = sidePick.value; shown = PAGE; fitSide(); render();
+      try { localStorage.setItem('unusual-side', side); } catch (e) {}
+    });
+    fitSide();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSide);
+  }
   if (tickerOnly) tickerOnly.addEventListener('change', function () { shown = PAGE; render(); });
   if (more) more.addEventListener('click', function () { shown += PAGE; render(); });
   document.querySelectorAll('.ranked').forEach(function (list) {
@@ -877,7 +930,7 @@ function freshHtml(
   }
   if (!newly.length) {
     return `<h1 id="fresh-h">No new trades were disclosed since ${esc(since)}.</h1>
-      <p class="lede">The most unusual purchases of the last month and every trade on file are below.</p>`;
+      <p class="lede">The most unusual trades of the last month, and every trade from it, are below.</p>`;
   }
 
   const groups = new Map<string, { name: string; party: string | undefined; url: string | null; rows: typeof newly }>();
@@ -957,20 +1010,17 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   // counts as recent when any of its trades falls in the window.
   const recentGroups = collectGroups(report.scoredTrades).filter((g) => g.trades.some(isWithinWindow));
 
-  const recentPurchaseGroups = recentGroups.filter((g) => {
-    const type = (g.lead.trade.type || "").toLowerCase();
-    return type.includes("purchase") || type.includes("exchange");
-  });
+  // Each list holds the top purchases and the top sales, capped separately so
+  // either side can fill a page when picked alone. Exchanges count as purchases.
+  const byScore = (a: TradeGroup, b: TradeGroup) => b.score.overallScore - a.score.overallScore;
+  const topOfEachSide = (groups: TradeGroup[], n: number) =>
+    RANK_SIDES.flatMap((side) => groups.filter((g) => rankSide(g.lead.trade) === side).sort(byScore).slice(0, n)).sort(byScore);
+  const rankable = recentGroups.filter((g) => rankSide(g.lead.trade) !== null);
 
-  const topPurchases = [...recentPurchaseGroups]
-    .sort((a, b) => b.score.overallScore - a.score.overallScore)
-    .slice(0, 30);
-
-  // A subset of the purchases above, so the section shows purchases either way
-  const committeeRelevant = recentPurchaseGroups
-    .filter((g) => g.score.flags.hasCommitteeRelevance)
-    .sort((a, b) => b.score.overallScore - a.score.overallScore)
-    .slice(0, 20);
+  const topTrades = topOfEachSide(rankable, 30);
+  // The committee view is always a subset of the full list for the same side
+  const committeeRelevant = topOfEachSide(rankable.filter((g) => g.score.flags.hasCommitteeRelevance), 20);
+  const onSide = (list: TradeGroup[], side: RankSide | "both") => list.filter((g) => side === "both" || rankSide(g.lead.trade) === side);
 
   const newly = [...purchaseTrades, ...salesTrades].filter(({ trade }) => isNewlyDisclosed(trade));
 
@@ -981,9 +1031,18 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   const tablePurchases = purchaseTrades.filter(inTable);
   const tableSales = salesTrades.filter(inTable);
 
+  const rankedCsv: Record<string, { filename: string; csv: string }> = {};
+  for (const [view, list, stem] of [["top", topTrades, "most-unusual"], ["committee", committeeRelevant, "committee-overlap"]] as const) {
+    for (const side of [...RANK_SIDES, "both"] as const) {
+      rankedCsv[`${view}-${side}`] = {
+        filename: `${stem}-${SIDE_WORDS[side]}-${dateStr}.csv`,
+        csv: buildCsv(CARD_CSV_HEADERS, onSide(list, side).map(cardCsvRow)),
+      };
+    }
+  }
+
   const csvSections = {
-    "top-purchases": { filename: `top-purchases-${dateStr}.csv`, csv: buildCsv(CARD_CSV_HEADERS, topPurchases.map(cardCsvRow)) },
-    "committee-relevant": { filename: `committee-relevant-${dateStr}.csv`, csv: buildCsv(CARD_CSV_HEADERS, committeeRelevant.map(cardCsvRow)) },
+    ...rankedCsv,
     "recent-purchases": { filename: `recent-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tablePurchases.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
     "recent-sales": { filename: `recent-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tableSales.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
   };
@@ -1018,9 +1077,10 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
     indexUrl ? `<li><a href="${esc(indexUrl)}"><span>All past reports</span><span class="n">${runs.length || ""}</span></a></li>` : "",
   ].join("");
 
-  const rankedList = (key: string, list: TradeGroup[], emptyText: string) => `
+  // The empty message names whichever side is picked; the script swaps it in.
+  const rankedList = (key: string, list: TradeGroup[], emptyText: (what: string) => string) => `
       <ol class="ranked" data-list="${key}"${key === "top" ? "" : " hidden"}>${list.map((t, i) => renderPick(t, `pick-${key}-${i}`, exchangeMap, memberLink)).join("")}
-        <li class="empty"${list.length ? " hidden" : ""}>${emptyText}</li>
+        <li class="empty"${(["purchase", "sale", "both"] as const).map((side) => ` data-${side}="${esc(emptyText(SIDE_WORDS[side]))}"`).join("")} hidden>${esc(emptyText(SIDE_WORDS.purchase))}</li>
       </ol>`;
 
   return `<!DOCTYPE html>
@@ -1047,20 +1107,24 @@ ${siteHeader(indexUrl ?? "#", picker)}
     <div class="wrap">
       <div class="band-head">
         <div>
-          <h2 id="unusual-h">Most unusual purchases</h2>
-          <p>Trades from the last ${topWindowDays} days, ranked by how far they sit from what Congress usually buys: rarely traded stocks, bigger than the member's normal size, or in an industry their committee oversees.</p>
+          <h2 id="unusual-h">Most unusual <span class="side-pick"><select id="unusual-side" aria-label="Which trades to rank">
+            <option value="purchase">purchases</option>
+            <option value="sale">sales</option>
+            <option value="both">purchases and sales</option>
+          </select></span></h2>
+          <p>Trades from the last ${topWindowDays} days, ranked by how far each sits from Congress's usual trading: rarely traded stocks, bigger than the member's normal size, or in an industry their committee oversees.</p>
         </div>
         <div class="views">
           <span class="seg" role="group" aria-label="Which trades">
-            <button type="button" data-view="top" data-csv="top-purchases" aria-pressed="true">All purchases</button>
-            <button type="button" data-view="committee" data-csv="committee-relevant" aria-pressed="false">Committee overlap</button>
+            <button type="button" data-view="top" aria-pressed="true">All</button>
+            <button type="button" data-view="committee" aria-pressed="false">Committee overlap</button>
           </span>
           <label class="check"><input type="checkbox" id="ticker-only"> Only trades with a ticker</label>
-          <button class="csv-btn" type="button" id="ranked-csv" data-csv-section="top-purchases">Download CSV</button>
+          <button class="csv-btn" type="button" id="ranked-csv" data-csv-section="top-purchase">Download CSV</button>
         </div>
       </div>
-      ${rankedList("top", topPurchases, `No purchases in the last ${topWindowDays} days scored high enough to rank.`)}
-      ${rankedList("committee", committeeRelevant, `No trades in the last ${topWindowDays} days fall under the member's own committees.`)}
+      ${rankedList("top", topTrades, (what) => `No ${what} in the last ${topWindowDays} days scored high enough to rank.`)}
+      ${rankedList("committee", committeeRelevant, (what) => `No ${what} in the last ${topWindowDays} days fall under the member's own committees.`)}
       <div class="ranked-foot"><span id="ranked-count"></span><button type="button" id="show-more">Show 10 more</button></div>
     </div>
   </section>

@@ -56,8 +56,41 @@ test("Every trade lists the last 30 days plus newly disclosed trades, 25 at a ti
   await expect(page.locator("#tab-purchases .row-new")).toHaveCount(1);
 });
 
-test("committee overlap lists only purchases", async ({ page }) => {
+test("the side picker switches the ranking between purchases, sales and both", async ({ page }) => {
   await page.setContent(html);
-  await expect(page.locator('[data-list="committee"] .pick')).toHaveCount(1);
-  await expect(page.locator('[data-list="committee"] .tick')).toHaveText(committeeBuy.symbol!);
+  await expect(page.locator("#unusual-h")).toContainText("Most unusual");
+  await page.locator('[data-view="committee"]').click();
+  const visible = page.locator('[data-list="committee"] .pick:visible .tick');
+  await expect(visible).toHaveText([committeeBuy.symbol!]);
+  await expect(page.locator("#ranked-csv")).toHaveAttribute("data-csv-section", "committee-purchase");
+
+  await page.locator("#unusual-side").selectOption("sale");
+  await expect(visible).toHaveText([committeeSale.symbol!]);
+  await expect(page.locator("#ranked-csv")).toHaveAttribute("data-csv-section", "committee-sale");
+
+  await page.locator("#unusual-side").selectOption("both");
+  await expect(visible).toHaveCount(2);
+
+  // The full list has no sales but the one, and says so for purchases-only views it cannot fill
+  await page.locator('[data-view="top"]').click();
+  await page.locator("#unusual-side").selectOption("sale");
+  await expect(page.locator('[data-list="top"] .pick:visible')).toHaveCount(1);
+});
+
+test("the side picker is remembered", async ({ page }) => {
+  await page.route("http://site.test/r.html", (r) => r.fulfill({ contentType: "text/html", body: html }));
+  await page.goto("http://site.test/r.html");
+  await page.locator("#unusual-side").selectOption("sale");
+  await page.reload();
+  await expect(page.locator("#unusual-side")).toHaveValue("sale");
+});
+
+test("an empty side says which side it is", async ({ page }) => {
+  const noSales = buildHtmlReport({
+    report: { ...report, scoredTrades: report.scoredTrades.filter((t) => t.trade !== committeeSale) } as AnalysisReport,
+    purchaseTrades: [], salesTrades: [], dateLabel: "Today", dateStr: daysAgo(0),
+  });
+  await page.setContent(noSales);
+  await page.locator("#unusual-side").selectOption("sale");
+  await expect(page.locator('[data-list="top"] .empty')).toHaveText("No sales in the last 30 days scored high enough to rank.");
 });
