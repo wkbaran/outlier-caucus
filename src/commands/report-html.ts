@@ -10,7 +10,7 @@ import { createFMPClient } from "../services/fmp-client.js";
 import { FMPTradeSource } from "../services/fmp-trade-source.js";
 import { createGovernmentProvider } from "../data/government-provider.js";
 import { createEdgarProvider } from "../data/edgar-provider.js";
-import { filingKey, loadOcrResults, loadScannedFilings, recheckStoredTickers, runDailyOcr } from "../ocr/ocr-filings.js";
+import { filingKey, loadOcrResults, loadScannedFilings, runDailyOcr } from "../ocr/ocr-filings.js";
 import { loadSymbolDirectory } from "../data/sec-symbols.js";
 import { buildAttention } from "../output/attention.js";
 
@@ -220,9 +220,6 @@ export const reportHtmlCommand = new Command("report:html")
         } else if (cacheOnlyMarket) {
           console.log("Market data: cache-only (no API calls — using --no-fetch-trades)");
         }
-
-        // Apply new ticker overrides and SEC list updates to stored OCR'd trades
-        tradeData = (await recheckStoredTickers()) ?? tradeData;
 
         console.log("\nRunning analysis...");
         report = await analyzeTrades(

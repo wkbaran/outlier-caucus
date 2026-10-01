@@ -118,7 +118,7 @@ function tickerItems(inputs: AttentionInputs): AttentionItem[] {
       detail,
       fix: [
         `Add it to \`${TICKER_OVERRIDES_FILE}\`: \`${JSON.stringify({ [asset]: "TICKER" })}\`, with \`""\` if it has no listed ticker.`,
-        `The next run applies it. To apply it now: \`${CLI} ocr:check-tickers --write\`, then \`${CLI} report:html --no-fetch-trades --date ${inputs.reportDate} --publish\``,
+        `Apply it to the stored trades: \`${CLI} ocr:check-tickers --write\`. The next published report includes it; to update this one now, \`${CLI} report:html --no-fetch-trades --date ${inputs.reportDate} --publish\``,
       ],
     };
   });

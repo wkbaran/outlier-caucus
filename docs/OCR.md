@@ -34,7 +34,7 @@ Bonds, private funds and LLCs match nothing and keep no ticker. A name has to ma
 
 Names are matched leniently but never guessed: the same words in any order ("SCHWAB CHARLES CORP"), initials joined ("U.S. BANCORP"), statement abbreviations expanded ("INTL", "HLDG", "COS"), and a name cut off at a statement's column width ("UNITEDHEALTH GROUP INCORPORATE") matched to the one company it starts. Bonds, notes and options ("4.329% 09/21/2028", "HYBRID", "LINKED TO") never take their issuer's stock ticker, and funds only match their exact name.
 
-Every `report:html` run re-checks all stored OCR'd trades before scoring, so a new override or an SEC list update reaches the next report. `ocr:check-tickers` runs the same check on demand, as a dry run that lists what would change; add `--write` to save. Checks start from `ocrTicker`, so re-running always gives the same answer.
+A filing's tickers are checked once, when it's read. After that they stay as they are, so a scheduled run never changes a confirmed ticker. To re-check the stored trades, after adding an override or changing the matching rules, run `ocr:check-tickers`: a dry run that lists what would change, then `--write` to save. Checks start from `ocrTicker`, so re-running always gives the same answer.
 
 ### Fixing a ticker by hand
 
@@ -48,7 +48,7 @@ What the check can't settle (a misspelled name, a company the SEC no longer list
 }
 ```
 
-Names compare ignoring case and spacing. An override beats every other check and is marked `manual`. The next run applies it; to apply it at once, run `ocr:check-tickers --write`, then rebuild the report with `report:html --no-fetch-trades --date <date> --publish`. In the Docker deployment the file lives in the state directory's `data/`, and commands run with `docker exec outlier-caucus node dist/index.js …`.
+Names compare ignoring case and spacing. An override beats every other check and is marked `manual`. Filings read later pick it up when they're read; for trades already stored, run `ocr:check-tickers --write`. The next published report includes the change, or rebuild the current one with `report:html --no-fetch-trades --date <date> --publish`. In the Docker deployment the file lives in the state directory's `data/`, and commands run with `docker exec outlier-caucus node dist/index.js …`.
 
 ## Accuracy
 

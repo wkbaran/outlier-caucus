@@ -374,7 +374,11 @@ export interface StoredTickerCheck {
   counts: Record<string, number>;
 }
 
-/** Re-check every stored OCR'd trade's ticker. Pure: returns new data without saving it. */
+/**
+ * Re-check every stored OCR'd trade's ticker. Pure: returns new data without saving it.
+ * Only `ocr:check-tickers` calls this: a confirmed ticker stays as it is until someone
+ * asks for a re-check, after an override or a change to the matching rules.
+ */
 export function checkStoredTickers(data: StoredTrades, dir: SymbolDirectory, overrides: TickerOverrides): StoredTickerCheck {
   const changes = new Map<string, number>();
   const counts: Record<string, number> = {};
@@ -392,23 +396,6 @@ export function checkStoredTickers(data: StoredTrades, dir: SymbolDirectory, ove
     return next;
   });
   return { data: { senateTrades: recheck(data.senateTrades), houseTrades: recheck(data.houseTrades) }, checked, changes, counts };
-}
-
-/**
- * Re-check stored OCR'd tickers and save any changes, so new overrides and SEC list
- * updates reach the next report. Returns the trade data, or null without SEC lists.
- */
-export async function recheckStoredTickers(log: Log = (line) => console.log(line)): Promise<StoredTrades | null> {
-  const symbols = await loadSymbolDirectory();
-  const stored = await loadData<StoredTrades>(TRADES_FILE);
-  if (!symbols || !stored?.data) return null;
-  const result = checkStoredTickers(stored.data, symbols, await loadTickerOverrides());
-  const changed = [...result.changes.values()].reduce((a, b) => a + b, 0);
-  if (changed > 0) {
-    await saveData(TRADES_FILE, result.data);
-    log(`🔎 Ticker check: ${changed} OCR'd ticker${changed === 1 ? "" : "s"} changed`);
-  }
-  return result.data;
 }
 
 /** OCR one filing, merge its rows into trades.json, and record the outcome. */
