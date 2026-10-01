@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import {
-  normalizeAmount, normalizeDate, normalizeType, validateRows, pageQuality, parseModelResponse,
+  normalizeAmount, normalizeDate, normalizeType, validateRows, rowTicker, pageQuality, parseModelResponse,
 } from "../src/ocr/ocr-page.js";
 import { pagesFromDocument, rotationCandidates } from "../src/ocr/render.js";
 import { earliestPlausibleDate, enabledOcrChambers, mergeOcrTrades, type FilingOcrOutcome } from "../src/ocr/ocr-filings.js";
@@ -141,4 +141,22 @@ test("OCR merge replaces stored rows only for fully successful filings", () => {
   const partial = stored();
   expect(mergeOcrTrades(partial, outcome("needs-review"))).toBe(false);
   expect(partial.houseTrades.map((t) => t.symbol)).toEqual(["OLD", "KEEP"]);
+});
+
+// From House filing 20035491, where the model put the asset-type code in the ticker field
+test("the ticker written in the asset name beats the model's ticker field", () => {
+  expect(rowTicker("Marsh Common Stock (MRSH)", "ST")).toBe("MRSH");
+  expect(rowTicker("Vuzix Corporation (VUZX)", "ST")).toBe("VUZX");
+  expect(rowTicker("Boston Scientific Corporation Common Stock (BSX) [ST]", "BSX")).toBe("BSX");
+});
+
+test("a model ticker that is the row's asset-type code is dropped", () => {
+  expect(rowTicker("Some Private Fund LP [ST]", "ST")).toBeUndefined();
+  expect(rowTicker("Coca-Cola Company", "KO")).toBe("KO");
+});
+
+test("share-class codes and name suffixes are not tickers", () => {
+  expect(rowTicker("AMERIPRISE FINANCIAL, INC.", "CMN")).toBeUndefined();
+  expect(rowTicker("TJX COMPANIES INC (NEW)", "CMN")).toBeUndefined();
+  expect(rowTicker("WALT DISNEY COMPANY (THE)", "DIS")).toBe("DIS");
 });

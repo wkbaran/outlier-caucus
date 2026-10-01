@@ -52,3 +52,9 @@ test("descriptions without a clear ticker yield nothing", () => {
   ];
   for (const desc of none) expect(extractTickerFromDescription(desc), desc).toBeUndefined();
 });
+
+test("a trailing House asset-type code does not hide the ticker", () => {
+  expect(extractTickerFromDescription("Boston Scientific Corporation Common Stock (BSX) [ST]")).toBe("BSX");
+  expect(extractTickerFromDescription("Eaton Corporation, PLC Ordinary Shares (ETN) [ST]")).toBe("ETN");
+  expect(extractTickerFromDescription("TULSA OKLA MET UTIL AUTH REV BDS SER. A [GS]")).toBeUndefined();
+});

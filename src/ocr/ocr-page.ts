@@ -150,6 +150,24 @@ function cleanTicker(raw: string | null | undefined): string | undefined {
 }
 
 /**
+ * The ticker written in the asset name wins over the model's ticker field: the
+ * model sometimes copies the House asset-type code there ("ST" from "[ST]") even
+ * when the name says "(MRSH)". A model ticker that is the row's asset-type code
+ * or a share-class code is dropped.
+ */
+export function rowTicker(asset: string, raw: string | null | undefined): string | undefined {
+  const written = extractTickerFromDescription(asset);
+  if (written) return written;
+  const ticker = cleanTicker(raw);
+  if (!ticker || SHARE_CLASS_CODES.has(ticker)) return undefined;
+  return asset.toUpperCase().includes(`[${ticker}]`) ? undefined : ticker;
+}
+
+// Share-class columns on broker statements that the model reads as tickers:
+// one member's statements gave 198 different companies the ticker "CMN".
+const SHARE_CLASS_CODES = new Set(["CMN", "COM", "ORD", "PFD", "SHS"]);
+
+/**
  * @param earliest YYYY-MM-DD; transaction dates before it are rejected as misreads
  *   (e.g. a date well before the filing was submitted)
  */
@@ -193,7 +211,7 @@ export function validateRows(rows: OcrRow[], now = new Date(), earliest?: string
     valid.push({
       owner,
       asset,
-      ticker: cleanTicker(row.ticker) ?? extractTickerFromDescription(asset),
+      ticker: rowTicker(asset, row.ticker),
       type,
       transactionDate: date,
       amount,

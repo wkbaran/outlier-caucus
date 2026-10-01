@@ -19,6 +19,8 @@ const LEADING_STOPWORDS = new Set([
 const TRAILING_STOPWORDS = new Set([
   "INC", "LLC", "LP", "LTD", "PLC", "CORP", "ETF", "ADR", "ADS", "REIT", "BDC", "UIT",
   "USD", "EUR", "GBP", "JPY", "CUSIP", "ISIN", "OTC",
+  // Broker statements end names with these: "TJX COMPANIES INC (NEW)", "WALT DISNEY COMPANY (THE)"
+  "NEW", "THE", "US", "DEL",
 ]);
 
 // Common states of incorporation that filers append in parentheses
@@ -33,8 +35,11 @@ const TRAILING_PAREN_RE = /\(([A-Z]{1,5}(?:[./-][A-Z])?)\)\s*(?:\d{1,2}\/\d{1,2}
 // "ROLLS-ROYCE HOLDINGS" is not read as ticker ROLLS)
 const LEADING_PREFIX_RE = /^([A-Z]{1,5}(?:\.[A-Z])?)\s*-\s+\S/;
 
+// House filings end the asset name with its asset-type code: "Boston Scientific Corp (BSX) [ST]"
+const ASSET_TYPE_CODE_RE = /\s*\[[A-Z]{2}\]\s*$/;
+
 export function extractTickerFromDescription(description: string | undefined | null): string | undefined {
-  const text = (description ?? "").trim();
+  const text = (description ?? "").trim().replace(ASSET_TYPE_CODE_RE, "");
   if (!text) return undefined;
 
   const trailing = text.match(TRAILING_PAREN_RE)?.[1];
