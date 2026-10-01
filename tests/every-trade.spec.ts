@@ -56,3 +56,8 @@ test("Every trade lists the last 30 days plus newly disclosed trades, 25 at a ti
   await expect(page.locator("#tab-purchases .row-new")).toHaveCount(1);
 });
 
+test("committee overlap lists only purchases", async ({ page }) => {
+  await page.setContent(html);
+  await expect(page.locator('[data-list="committee"] .pick')).toHaveCount(1);
+  await expect(page.locator('[data-list="committee"] .tick')).toHaveText(committeeBuy.symbol!);
+});

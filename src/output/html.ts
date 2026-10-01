@@ -957,15 +957,17 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   // counts as recent when any of its trades falls in the window.
   const recentGroups = collectGroups(report.scoredTrades).filter((g) => g.trades.some(isWithinWindow));
 
-  const topPurchases = recentGroups
-    .filter((g) => {
-      const type = (g.lead.trade.type || "").toLowerCase();
-      return type.includes("purchase") || type.includes("exchange");
-    })
+  const recentPurchaseGroups = recentGroups.filter((g) => {
+    const type = (g.lead.trade.type || "").toLowerCase();
+    return type.includes("purchase") || type.includes("exchange");
+  });
+
+  const topPurchases = [...recentPurchaseGroups]
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 30);
 
-  const committeeRelevant = recentGroups
+  // A subset of the purchases above, so the section shows purchases either way
+  const committeeRelevant = recentPurchaseGroups
     .filter((g) => g.score.flags.hasCommitteeRelevance)
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 20);
