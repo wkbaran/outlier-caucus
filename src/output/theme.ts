@@ -230,6 +230,7 @@ export const BASE_CSS = `
     border-radius: 6px; padding: 0.2rem 0.4rem; margin-left: 0.25rem;
   }
   .run select option { background: var(--raised); color: var(--ink); }
+  .run-latest { font-size: 0.9rem; font-weight: 600; color: var(--signal); }
   .top .spacer { flex: 1; }
   .theme-btn { background: var(--raised); border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.8rem; font-size: 0.82rem; }
   .theme-btn:hover { border-color: var(--line-strong); }
@@ -309,6 +310,7 @@ export const BASE_CSS = `
   @media (max-width: 640px) {
     .wrap { padding-left: 1rem; padding-right: 1rem; }
     .run, .crumbs { order: 3; flex-basis: 100%; }
+    .run-latest { order: 3; }
     .pal { left: 1rem; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

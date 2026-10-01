@@ -600,6 +600,34 @@ const REPORT_JS = `
   var run = document.getElementById('run');
   if (run) run.addEventListener('change', function () { location.href = run.value; });
 
+  // The options were baked in when this report was built, so reports published
+  // since are missing. Refill them from the live manifest and point to the latest.
+  if (run && window.fetch) {
+    fetch('../manifest.json', { cache: 'no-cache' })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (entries) {
+        if (!Array.isArray(entries) || !entries.length) return;
+        var here = run.dataset.date;
+        run.textContent = '';
+        entries.forEach(function (e) {
+          var opt = document.createElement('option');
+          opt.value = '../' + e.file;
+          opt.textContent = e.dateLabel + (e.newTrades ? ' (' + e.newTrades + ' new)' : '');
+          opt.selected = e.date === here;
+          run.appendChild(opt);
+        });
+        var latest = entries[0];
+        if (latest.date > here) {
+          var link = document.createElement('a');
+          link.className = 'run-latest';
+          link.href = '../' + latest.file;
+          link.textContent = 'Latest: ' + latest.dateLabel;
+          run.parentNode.insertAdjacentElement('afterend', link);
+        }
+      })
+      .catch(function () {});
+  }
+
   // Most unusual: which list, ticker filter, show more, expand
   var PAGE = 10, shown = PAGE, view = 'top';
   var views = document.querySelectorAll('[data-view]');
@@ -822,7 +850,7 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   const dates = report.scoredTrades.map((t) => t.trade.transactionDate).filter((d): d is string => !!d).sort();
 
   const picker = runs.length
-    ? `<label class="run">Report for <select id="run">${runs.map((r) =>
+    ? `<label class="run">Report for <select id="run" data-date="${esc(dateStr)}">${runs.map((r) =>
         `<option value="${esc(r.href)}"${r.date === dateStr ? " selected" : ""}>${esc(r.label)}${r.newTrades ? ` (${r.newTrades} new)` : ""}</option>`).join("")}</select></label>`
     : `<span class="run">Report for ${esc(dateLabel)}</span>`;
 
