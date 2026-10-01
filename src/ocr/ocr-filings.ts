@@ -4,6 +4,7 @@
  * rows into the trade data. Shared by the daily run and the ocr:catchup command.
  */
 import * as fs from "fs/promises";
+import { loadSymbolDirectory, checkTicker, type SymbolDirectory } from "../data/sec-symbols.js";
 import * as path from "path";
 import type { FMPTrade } from "../types/index.js";
 import { loadData, saveData } from "../utils/storage.js";
@@ -323,12 +324,32 @@ export function mergeOcrTrades(tradeData: StoredTrades, outcome: FilingOcrOutcom
   return true;
 }
 
+/**
+ * Check an OCR'd trade's ticker against the SEC symbol lists and its asset name.
+ * Re-running starts from the ticker as originally read, so it gives the same answer.
+ */
+export function applyTickerCheck(trade: FMPTrade, dir: SymbolDirectory): FMPTrade {
+  const read = trade.ocrTicker !== undefined ? trade.ocrTicker || undefined : trade.symbol;
+  const { symbol, check } = checkTicker(dir, trade.assetDescription ?? "", read);
+  const { symbol: _old, tickerCheck: _check, ...rest } = trade;
+  return { ...rest, ...(symbol ? { symbol } : {}), ...(check ? { tickerCheck: check } : {}), ocrTicker: read ?? "" };
+}
+
 /** OCR one filing, merge its rows into trades.json, and record the outcome. */
 export async function ocrAndMerge(
   filing: ReviewFiling,
   opts: { ocr: OcrOptions; log: Log; pages?: PageSource[] }
 ): Promise<FilingOcrOutcome> {
   const outcome = await ocrFiling(filing, opts);
+  const symbols = await loadSymbolDirectory();
+  if (symbols) {
+    outcome.trades = outcome.trades.map((t) => applyTickerCheck(t, symbols));
+    for (const t of outcome.trades) {
+      if (t.symbol !== (t.ocrTicker || undefined)) {
+        opts.log(`    ticker ${t.tickerCheck}: ${t.ocrTicker || "none"} → ${t.symbol ?? "none"}  (${t.assetDescription})`);
+      }
+    }
+  }
   const stored = await loadData<StoredTrades>(TRADES_FILE);
   if (stored?.data) {
     outcome.record.merged = mergeOcrTrades(stored.data, outcome);

@@ -111,6 +111,7 @@ function tradeEntry(
     marketCap: ex?.marketCap && ex.marketCap.category !== "unknown" ? ex.marketCap.value : null,
     congressTradesInAsset: ex?.rarity?.totalCongressTrades ?? null,
     fromScannedFiling: trade.source === "ocr",
+    tickerCheck: trade.tickerCheck ?? null,
     filing: trade.link ?? null,
     memberPage: memberFile ? `${opts.reportDate}/${memberFile}` : null,
   };
@@ -187,6 +188,7 @@ export function buildBrief(opts: BriefOptions) {
       foundAt: "When this service first found the trade. null for trades stored before that was recorded.",
       postedLagDays: "Days from the filing date to foundAt. The House posts paper filings days after receiving them, so a large value means the news is older than the filing date suggests.",
       fromScannedFiling: "Read by OCR from a scanned paper filing; check it against the filing link.",
+      tickerCheck: "For scanned filings, how the ticker held up against the SEC's lists of listed companies and funds: verified (the company name matches), fund (a fund or ETF symbol, which the SEC lists without names), corrected (the ticker read was wrong and the company name gave the right one), found-by-name (no ticker on the filing; matched by company name), name-mismatch (a listed ticker for a differently named company, kept because the filing writes it), unknown-symbol (not a listed company or fund). null for electronic filings or trades not yet checked.",
       clusters: "Tickers that two or more members traded among the new filings.",
       topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context.`,
     },

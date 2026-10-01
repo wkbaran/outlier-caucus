@@ -171,6 +171,10 @@ export const FMPTradeSchema = z.object({
   source: z.string().optional(),
   // ISO time this service first stored the trade; absent on trades stored before it was recorded
   firstSeen: z.string().optional(),
+  // OCR'd trades: how the ticker held up against the SEC symbol lists (see sec-symbols.ts),
+  // and the ticker as read before that check ("" when none was read)
+  tickerCheck: z.string().optional(),
+  ocrTicker: z.string().optional(),
 });
 
 export type FMPTrade = z.infer<typeof FMPTradeSchema>;

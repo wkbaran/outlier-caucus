@@ -14,6 +14,7 @@ Settings come from environment variables; `node --env-file=.env` loads them from
 | `fetch:trades` | Fetches new trades only |
 | `fetch:committees` | Refreshes members, parties and committee membership |
 | `ocr:catchup` | Works through the backlog of scanned filings. See [OCR](OCR.md) |
+| `ocr:check-tickers` | Checks OCR'd trades' tickers against the SEC symbol lists; `--write` saves the corrections. See [OCR](OCR.md#ticker-checks) |
 | `list:trades` | Recent trades, filterable by `--chamber`, `--trader`, `--symbol` or `--relevant-only` (committee overlap) |
 | `list:committees` | Each committee with the sectors it oversees and its members |
 | `report:sales` | Every sale, formatted for checking against your own holdings |
@@ -61,6 +62,7 @@ Everything lives in `data/`.
 | `ocr-results.json` | What OCR made of each scanned filing | Each OCR run |
 | `market-data-cache.json` | Company size, sector and industry per ticker | After 30 days (`--market-data-ttl`) |
 | `edgar-ticker-cik.json` | SEC ticker to company map | After 7 days |
+| `sec-symbols.json` | SEC company tickers with names, and fund symbols, for checking OCR'd tickers | After 7 days |
 | `committee-data.json` | Members, parties and committees | Weekly, by `report:html` |
 | `seen-trades.json` | Trades shown by `analyze --new-only` | Each `--new-only` run |
 

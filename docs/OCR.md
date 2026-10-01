@@ -9,9 +9,29 @@ OCR is optional. Without a reachable Ollama the daily run logs a warning and car
 1. Each page is rendered to PNG with MuPDF. Pages scanned sideways (portrait for the landscape House form, or the reverse for the Senate form) are rotated first, because the model reads a sideways page into confident but wrong rows.
 2. The model returns rows as JSON. A row becomes a trade only if its transaction date, amount range and purchase/sale type all normalize to known values. Account header rows, form boilerplate and implausible dates are dropped.
 3. Every valid row is kept. A page where fewer than 80% of rows are valid is flagged for review in the log, but its readable rows still go in: a slightly wrong row is easier to notice in the report than a missing trade.
-4. Rows are stored with `source: "ocr"` and shown with a **Scanned** tag in the report. A cleanly read filing replaces any rows stored for it. A filing with pages needing review only adds rows when nothing is stored for it yet.
+4. The ticker comes from the asset name when the filing writes one there ("Marsh Common Stock (MRSH)"), and from the model's ticker field only otherwise. The model sometimes fills that field with the House asset-type code (`ST` from `[ST]`) or a broker statement's share-class column (`CMN`), so those are dropped.
+5. The ticker is then checked against the SEC's lists of listed companies (with their names) and of fund and ETF symbols, and against the company name on the filing. See [Ticker checks](#ticker-checks).
+6. Rows are stored with `source: "ocr"` and shown with a **Scanned** tag in the report. A cleanly read filing replaces any rows stored for it. A filing with pages needing review only adds rows when nothing is stored for it yet.
 
 Structured output is deliberately not used: constraining the model with Ollama's JSON-schema `format` made it misread the amount column on 10 of 25 rows of a test page.
+
+## Ticker checks
+
+A misread ticker is worse than a missing one: the trade gets the wrong company's size and sector, and counts toward the wrong stock's rarity. So each OCR'd row's ticker is checked against [`company_tickers.json`](https://www.sec.gov/files/company_tickers.json) and [`company_tickers_mf.json`](https://www.sec.gov/files/company_tickers_mf.json) from the SEC, cached in `data/sec-symbols.json` and refreshed weekly (needs `SEC_USER_AGENT`). Names are compared on their significant words, ignoring legal forms and security descriptions such as "Inc", "Common Stock" or "Sponsored ADR". The outcome is stored on the trade as `tickerCheck`, with the ticker as read in `ocrTicker`:
+
+| `tickerCheck` | Meaning | Ticker kept |
+|---|---|---|
+| `verified` | A listed company whose name matches the filing | Yes |
+| `fund` | A fund or ETF symbol. The SEC lists these without names, so only the symbol is checked | Yes |
+| `corrected` | Unknown, or a company whose name doesn't match, while the filing's name matches exactly one listed company: `WMTD` became `WMT`, `VUZX` became `VUZI` | Replaced |
+| `found-by-name` | No ticker was read, and the name matches exactly one listed company, such as the "TYLER TECHNOLOGIES, INC." rows on broker statements | Added |
+| `name-mismatch` | A listed company with a different name, kept because the filing writes the ticker in the asset name | Yes |
+| `rejected` | A listed company with a different name that the filing never writes, such as `GS` (Goldman Sachs) read off a municipal bond | Dropped |
+| `unknown-symbol` | Neither listed nor found by name. Often an OTC or foreign listing | Yes |
+
+Bonds, private funds and LLCs match nothing and keep no ticker. A name has to match exactly one company to be used, so an ambiguous name never picks one.
+
+`ocr:check-tickers` runs the same check over the trades already stored, as a dry run that lists what would change; add `--write` to save. Re-running it starts from `ocrTicker`, so it always gives the same answer, and it's worth running after the matching rules change.
 
 ## Accuracy
 
