@@ -61,6 +61,7 @@ That fetches new filings, reruns the analysis, regenerates the site, syncs `outp
 | `report:html --publish --skip-unchanged` | Stops early when the fetch found nothing new. What the scheduled run uses |
 | `report:html --render-only --publish` | Rebuilds today's pages from the last saved analysis, after a design change say |
 | `report:html --rebuild-index --publish` | Rebuilds only `index.html` and `archive.html` |
+| `report:html --no-fetch-trades --date 2026-09-29 --publish` | Reruns the analysis on the stored trades and replaces that day's report, after correcting data say. What counts as new is still measured from the report before it |
 
 ## Daily run on Windows
 

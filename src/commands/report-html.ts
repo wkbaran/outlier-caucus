@@ -85,6 +85,7 @@ export const reportHtmlCommand = new Command("report:html")
     `Output directory for HTML files (default: ${DEFAULT_WEB_DIR})`,
     DEFAULT_WEB_DIR
   )
+  .option("--date <YYYY-MM-DD>", "Build the report for this date instead of today, replacing that day's report (use with --no-fetch-trades to correct a published report)")
   .option("--render-only", "Re-render HTML from the last saved analysis without re-fetching or re-analyzing")
   .option("--rebuild-index", "Rebuild archive.html and index.html from the manifest (prunes deleted reports) without generating a new report")
   .option("--skip-unchanged", "Skip generating and publishing if fetching found no new trades since the last run (for scheduled/automated runs)")
@@ -97,6 +98,11 @@ export const reportHtmlCommand = new Command("report:html")
     try {
       const webDir = path.resolve(process.cwd(), options.out as string);
       await fs.mkdir(webDir, { recursive: true });
+
+      if (options.date && !/^\d{4}-\d{2}-\d{2}$/.test(options.date as string)) {
+        console.error(`❌ --date must be YYYY-MM-DD (got "${options.date}")`);
+        process.exit(1);
+      }
 
       const topWindowDays = parseInt(options.topWindowDays as string, 10);
       if (isNaN(topWindowDays) || topWindowDays <= 0) {
@@ -247,7 +253,8 @@ export const reportHtmlCommand = new Command("report:html")
       // ── Prepare output directory ─────────────────────────────────────────
       // Local date for both the folder and the page labels: a UTC date rolls over
       // mid-evening in US time zones, filing an evening run under tomorrow.
-      const now = new Date();
+      // --date rebuilds an earlier report under its own date; noon keeps the label on that day.
+      const now = options.date ? new Date(`${options.date}T12:00:00`) : new Date();
       const pad = (n: number) => String(n).padStart(2, "0");
       const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
       const runDateLabel = formatDate(now);
