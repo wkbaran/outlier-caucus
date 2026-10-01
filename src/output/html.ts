@@ -8,7 +8,7 @@ import { HTML_OPEN, THEME_JS, themeHead, siteHeader, shortDate, shortAmount, tid
 /** Returns the member page filename for a trade's filer, or null if no page exists */
 export type MemberLinker = (trade: FMPTrade) => string | null;
 
-const COMMITTEE_NAMES = new Map<string, string>(
+export const COMMITTEE_NAMES = new Map<string, string>(
   [...SENATE_COMMITTEE_TAXONOMY, ...HOUSE_COMMITTEE_TAXONOMY].map(
     (c) => [c.committeeId, c.committeeName]
   )
@@ -131,7 +131,7 @@ function partyFullName(party: string | undefined): string {
 }
 
 /** Same badge descriptions used on the Top Purchases / Committee-Relevant cards. */
-const FLAG_DESCRIPTIONS: Record<keyof UniquenessResult["flags"], { label: string; title: string }> = {
+export const FLAG_DESCRIPTIONS: Record<keyof UniquenessResult["flags"], { label: string; title: string }> = {
   isRareStock: { label: "Rare", title: "Stock rarely traded by Congress — fewer than 4 total trades" },
   isHighConviction: { label: "High Conviction", title: "Trade is significantly larger than this member's typical trade size" },
   hasCommitteeRelevance: { label: "Committee", title: "Trader serves on a committee that oversees this stock's sector — potential insider knowledge" },

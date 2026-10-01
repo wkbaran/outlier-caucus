@@ -31,6 +31,7 @@ import { buildIndexPage, buildHomePage, loadManifest, upsertManifest, rebuildMan
 import type { ManifestSymbol, ReportManifestEntry } from "../output/index-page.js";
 import { createNewlyDisclosedPredicate, filingDateIso, maxFilingDate } from "../utils/filing-date.js";
 import { publishOutput } from "../publish.js";
+import { buildBrief } from "../output/brief.js";
 import { ROOT_ICONS } from "../output/icons.js";
 import { loadData, getLatestReport, getDataAge } from "../utils/storage.js";
 import type { FMPTrade } from "../types/index.js";
@@ -406,9 +407,10 @@ export const reportHtmlCommand = new Command("report:html")
       ]
         .sort((a, b) => b.date.localeCompare(a.date))
         .map((r) => ({ date: r.date, label: r.label, href: `../${r.file}`, newTrades: r.newTrades }));
-      const previousRunLabel = filingBaseline
-        ? priorManifest.filter((e) => e.date < dateStr).sort((a, b) => b.date.localeCompare(a.date))[0]?.dateLabel
+      const previousRun = filingBaseline
+        ? priorManifest.filter((e) => e.date < dateStr).sort((a, b) => b.date.localeCompare(a.date))[0]
         : undefined;
+      const previousRunLabel = previousRun?.dateLabel;
 
       const html = buildHtmlReport({
         report,
@@ -428,6 +430,23 @@ export const reportHtmlCommand = new Command("report:html")
 
       await fs.writeFile(path.join(dateDir, reportFile), html, "utf-8");
       console.log(`   Saved → ${path.join(dateDir, reportFile)}`);
+
+      // ── Brief for agents ─────────────────────────────────────────────────
+      const brief = JSON.stringify(buildBrief({
+        report,
+        trades: allTrades,
+        isNewlyDisclosed,
+        filingBaseline,
+        previousReport: previousRun && { date: previousRun.date, label: previousRun.dateLabel },
+        reportDate: dateStr,
+        reportLabel: runDateLabel,
+        resolveParty,
+        memberLink,
+        topWindowDays,
+      }), null, 2);
+      await fs.writeFile(path.join(dateDir, "brief.json"), brief, "utf-8");
+      await fs.writeFile(path.join(webDir, "latest.json"), brief, "utf-8");
+      console.log(`   Brief → ${path.join(dateDir, "brief.json")} and latest.json`);
 
       // ── Update manifest + rebuild index ──────────────────────────────────
       const manifest = await upsertManifest(webDir, {

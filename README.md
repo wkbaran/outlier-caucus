@@ -64,6 +64,22 @@ Add `--publish` to upload the site to S3, or skip OCR with `--no-ocr` if you don
 - **Every trade**, with pages per member and per party, and an archive of past reports.
 - A palette picker and light and dark modes.
 
+## The brief for agents
+
+`latest.json`, next to `index.html` on the site, is the newest report's new disclosures as one JSON file for an LLM agent to read, such as a morning check for anything worth acting on. It's rewritten whenever a run finds new trades and served with `no-cache`, so `reportDate` tells an agent whether anything turned up today.
+
+| Field | What it holds |
+|---|---|
+| `newSince` | The previous report and the filing date that counts as new |
+| `summary` | Counts of new purchases, sales, members and tickers, the median disclosure lag, and the three highest-scoring new trades |
+| `clusters` | Tickers that two or more members traded among the new filings |
+| `newFilings` | Every newly disclosed trade, highest score first, with its flags, the reasons behind them, sector, disclosure lag, and links to the filing and member page |
+| `topPurchases` | The ten highest-scoring purchases of the last 30 days, new or not, for context |
+| `glossary`, `about` | What each field means and how far to trust it |
+| `links` | The HTML report, this run's own `brief.json`, the archive and the manifest |
+
+Each run also keeps its copy as `<date>/brief.json`. Paths are relative to the site root.
+
 ## Docs
 
 - [Scoring](docs/SCORING.md): the six factors, their weights and thresholds

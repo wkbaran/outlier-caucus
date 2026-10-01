@@ -7,13 +7,17 @@ output/web/
   index.html            forwards to the newest report
   archive.html          every report, newest first
   manifest.json         run history: dates, counts, what was new
+  latest.json           the newest brief for agents (see README)
   favicon.ico           icons for browsers and iOS home screens
   apple-touch-icon.png  (regenerate with scripts/make-icons.mjs)
   2026-09-24/
     report.html         the daily briefing
     member-<name>.html  one page per member
     party-<name>.html   Republicans, Democrats, Independents
+    brief.json          this run's brief for agents
 ```
+
+`index.html`, `archive.html`, `manifest.json` and `latest.json` keep the same name every run, so they're uploaded with `Cache-Control: no-cache`.
 
 Any static host works. The rest of this page covers the setup this repo ships with: S3 and CloudFront on AWS, and a daily scheduled run.
 

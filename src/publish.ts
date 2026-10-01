@@ -26,6 +26,9 @@ function mimeType(file: string): string {
   return MIME_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
 }
 
+// Rewritten every run under the same name, so browsers and agents must revalidate.
+const NO_CACHE = new Set(["index.html", "archive.html", "manifest.json", "latest.json"]);
+
 function md5(file: string): string {
   return crypto.createHash("md5").update(fs.readFileSync(file)).digest("hex");
 }
@@ -105,6 +108,7 @@ export async function publishOutput(opts: PublishOptions): Promise<void> {
         Key: key,
         Body: fs.readFileSync(localPath),
         ContentType: mimeType(localPath),
+        ...(NO_CACHE.has(path.relative(localDir, localPath).replace(/\\/g, "/")) ? { CacheControl: "no-cache" } : {}),
       })
     );
     console.log(`[publish] ↑ ${key}`);
