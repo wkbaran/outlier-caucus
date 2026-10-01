@@ -71,8 +71,9 @@ test("clusters a ticker that two members traded", () => {
   ]);
 });
 
-test("top purchases include older filings in the window", () => {
+test("top purchases and sales include older filings in the window", () => {
   expect(buildBrief(opts).topPurchases.map((e) => e.symbol)).toEqual(["OLD", "ZZZ", "ACME"]);
+  expect(buildBrief(opts).topSales.map((e) => e.symbol)).toEqual(["ACME"]);
 });
 
 test("nothing is new on the first report", () => {

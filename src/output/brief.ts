@@ -177,12 +177,15 @@ export function buildBrief(opts: BriefOptions) {
 
   const cutoff = new Date(report.generatedAt);
   cutoff.setDate(cutoff.getDate() - opts.topWindowDays);
-  const topPurchases = collectGroups(report.scoredTrades)
-    .filter((g) => side(g.lead.trade.type) === "purchase" &&
-      g.trades.some((t) => t.trade.transactionDate && new Date(t.trade.transactionDate) >= cutoff))
+  const recentGroups = collectGroups(report.scoredTrades)
+    .filter((g) => g.trades.some((t) => t.trade.transactionDate && new Date(t.trade.transactionDate) >= cutoff));
+  const topOf = (s: "purchase" | "sale") => recentGroups
+    .filter((g) => side(g.lead.trade.type) === s)
     .sort((a, b) => b.score.overallScore - a.score.overallScore)
     .slice(0, 10)
     .map((g) => groupEntry(g.trades.map((t) => t.trade), lookup, opts));
+  const topPurchases = topOf("purchase");
+  const topSales = topOf("sale");
 
   return {
     schema: BRIEF_SCHEMA,
@@ -219,6 +222,7 @@ export function buildBrief(opts: BriefOptions) {
       clusters: "Tickers that two or more members traded among the new filings.",
       attention: "Things the run couldn't resolve on its own, those touching this report's new trades first, each with the steps to fix it before the next run: scanned filings that failed or read poorly (trades may be missing or wrong), scanned filings still waiting for OCR (trades missing), and stock names without a confirmed ticker (no company size, sector or committee score). Commands run from the project directory; in the Docker deployment prefix them with docker exec outlier-caucus. Each item has a key; attention:review <key> marks it reviewed, which hides it until the problem changes (summary.reviewedHidden counts those).",
       topPurchases: `The highest-scoring purchases made in the ${opts.topWindowDays} days before this report, new or not, for context, with lots scored together as one entry (see tradeCount).`,
+      topSales: `The same for sales: the highest-scoring sales made in the ${opts.topWindowDays} days before this report, new or not.`,
     },
     summary: {
       newTrades: newFilings.length,
@@ -238,6 +242,7 @@ export function buildBrief(opts: BriefOptions) {
     clusters: clusters(newFilings),
     newFilings,
     topPurchases,
+    topSales,
   };
 }
 
