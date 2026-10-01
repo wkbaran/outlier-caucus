@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { buildHtmlReport } from "../src/output/html.js";
 import type { AnalysisReport, AnalyzedTrade } from "../src/services/analysis-service.js";
 import type { FMPTrade } from "../src/types/index.js";
@@ -42,6 +42,12 @@ const html = buildHtmlReport({
   previousRunLabel: "Yesterday",
 });
 
+/** Open the side picker in the heading and choose an option. */
+async function pickSide(page: Page, value: "purchase" | "sale" | "both") {
+  await page.locator(".side-btn").click();
+  await page.locator(`.side-menu [role="option"][data-value="${value}"]`).click();
+}
+
 test("Every trade lists the last 30 days plus newly disclosed trades, 25 at a time", async ({ page }) => {
   await page.setContent(html);
   await expect(page.locator('[data-tab="tab-purchases"]')).toHaveText("Purchases 31");
@@ -64,25 +70,25 @@ test("the side picker switches the ranking between purchases, sales and both", a
   await expect(visible).toHaveText([committeeBuy.symbol!]);
   await expect(page.locator("#ranked-csv")).toHaveAttribute("data-csv-section", "committee-purchase");
 
-  await page.locator("#unusual-side").selectOption("sale");
+  await pickSide(page, "sale");
   await expect(visible).toHaveText([committeeSale.symbol!]);
   await expect(page.locator("#ranked-csv")).toHaveAttribute("data-csv-section", "committee-sale");
 
-  await page.locator("#unusual-side").selectOption("both");
+  await pickSide(page, "both");
   await expect(visible).toHaveCount(2);
 
   // The full list has no sales but the one, and says so for purchases-only views it cannot fill
   await page.locator('[data-view="top"]').click();
-  await page.locator("#unusual-side").selectOption("sale");
+  await pickSide(page, "sale");
   await expect(page.locator('[data-list="top"] .pick:visible')).toHaveCount(1);
 });
 
 test("the side picker is remembered", async ({ page }) => {
   await page.route("http://site.test/r.html", (r) => r.fulfill({ contentType: "text/html", body: html }));
   await page.goto("http://site.test/r.html");
-  await page.locator("#unusual-side").selectOption("sale");
+  await pickSide(page, "sale");
   await page.reload();
-  await expect(page.locator("#unusual-side")).toHaveValue("sale");
+  await expect(page.locator(".side-btn")).toHaveText("sales");
 });
 
 test("an empty side says which side it is", async ({ page }) => {
@@ -91,6 +97,38 @@ test("an empty side says which side it is", async ({ page }) => {
     purchaseTrades: [], salesTrades: [], dateLabel: "Today", dateStr: daysAgo(0),
   });
   await page.setContent(noSales);
-  await page.locator("#unusual-side").selectOption("sale");
+  await pickSide(page, "sale");
   await expect(page.locator('[data-list="top"] .empty')).toHaveText("No sales in the last 30 days scored high enough to rank.");
+});
+
+test("the side menu works from the keyboard and shows counts", async ({ page }) => {
+  await page.setContent(html);
+  const btn = page.locator(".side-btn");
+  const menu = page.getByRole("listbox", { name: "Which trades to rank" });
+  await expect(btn).toHaveText("purchases");
+  await expect(menu).toBeHidden();
+
+  await btn.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu).toBeVisible();
+  await expect(btn).toHaveAttribute("aria-expanded", "true");
+  // 36 purchases are ranked (capped at 30) and the one sale
+  await expect(menu.getByRole("option")).toHaveText(["purchases30", "sales1", "purchases and sales31"]);
+  await expect(menu.getByRole("option", { selected: true })).toBeFocused();
+
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(btn).toHaveText("sales");
+  await expect(btn).toBeFocused();
+  await expect(page.locator('[data-list="top"] .pick:visible')).toHaveCount(1);
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(btn).toHaveText("sales");
+
+  await btn.click();
+  await page.locator("#every-h").click();
+  await expect(menu).toBeHidden();
 });

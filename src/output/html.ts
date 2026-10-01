@@ -565,24 +565,56 @@ const REPORT_CSS = `
   .band-head { display: flex; align-items: end; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
   .band-head h2 { font-size: 1.6rem; font-weight: 600; font-stretch: 85%; letter-spacing: -0.01em; }
   .band-head p { margin-top: 0.2rem; color: var(--sub); max-width: 58ch; font-size: 0.95rem; }
-  /* "Most unusual [purchases]": a select that reads as the heading's last word */
+  /* "Most unusual [purchases]": the side picker reads as the heading's last
+     word. Without scripts it is the native select; with them, a button and a
+     listbox styled to the page stand in for it. */
   .side-pick { position: relative; display: inline-block; }
-  .side-pick select, .side-probe {
-    font: inherit; letter-spacing: inherit; font-stretch: inherit;
-  }
   .side-pick select {
+    font: inherit; letter-spacing: inherit; font-stretch: inherit;
     appearance: none; -webkit-appearance: none; background: none; color: inherit; border: 0; border-radius: 0;
-    padding: 0 1.1em 0.04em 0; margin: 0; cursor: pointer; box-sizing: content-box;
-    border-bottom: 2px solid var(--signal);
+    padding: 0 1.1em 0.04em 0; margin: 0; cursor: pointer; border-bottom: 2px solid var(--signal);
   }
-  .side-pick::after {
+  .side-pick:not(.enhanced)::after {
     content: ""; position: absolute; right: 0.15em; top: 50%; width: 0.38em; height: 0.38em; margin-top: -0.3em;
     border-right: 2px solid var(--signal); border-bottom: 2px solid var(--signal); transform: rotate(45deg); pointer-events: none;
   }
-  .side-pick select:hover, .side-pick select:focus-visible { color: var(--signal); }
-  .side-pick select:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
   .side-pick option { font-size: 1rem; background: var(--raised); color: var(--ink); }
-  .side-probe { position: absolute; visibility: hidden; white-space: pre; left: 0; top: 0; }
+  .side-pick.enhanced select { display: none; }
+  .side-btn {
+    font: inherit; letter-spacing: inherit; font-stretch: inherit; color: inherit; background: none;
+    border: 0; border-bottom: 2px solid var(--signal); border-radius: 0; padding: 0 0 0.04em; margin: 0;
+    display: inline-flex; align-items: center; gap: 0.35em; cursor: pointer;
+  }
+  .side-btn .chev {
+    width: 0.36em; height: 0.36em; border-right: 2px solid var(--signal); border-bottom: 2px solid var(--signal);
+    transform: translateY(-0.12em) rotate(45deg); transition: transform 0.15s ease;
+  }
+  .side-btn[aria-expanded="true"] .chev { transform: translateY(0.08em) rotate(225deg); }
+  .side-btn:hover, .side-btn[aria-expanded="true"] { color: var(--signal); }
+  .side-btn:focus-visible { outline: 2px solid var(--signal); outline-offset: 4px; }
+  .side-menu {
+    position: absolute; left: -0.75rem; top: calc(100% + 0.55rem); z-index: 20; min-width: 15.5rem;
+    margin: 0; padding: 0.35rem; list-style: none; background: var(--raised);
+    border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 14px 36px -10px rgb(0 0 0 / 0.45);
+    font-size: 0.98rem; font-weight: 400; font-stretch: 100%; letter-spacing: 0; line-height: 1.3;
+    animation: side-menu-in 0.12s ease-out;
+  }
+  .side-menu[hidden] { display: none; }
+  @keyframes side-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+  @media (prefers-reduced-motion: reduce) { .side-menu { animation: none; } .side-btn .chev { transition: none; } }
+  .side-menu li {
+    display: grid; grid-template-columns: 1.1rem 1fr auto; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 0.7rem 0.55rem 0.55rem; border-radius: 8px; cursor: pointer; color: var(--sub);
+  }
+  .side-menu li:focus { outline: none; }
+  .side-menu li:hover, .side-menu li:focus-visible { background: var(--line); color: var(--ink); }
+  .side-menu li[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+  .side-menu li[aria-selected="true"]::before {
+    content: ""; justify-self: center; width: 0.32rem; height: 0.62rem; margin-top: -0.15rem;
+    border-right: 2px solid var(--signal); border-bottom: 2px solid var(--signal); transform: rotate(45deg);
+  }
+  .side-menu li:not([aria-selected="true"])::before { content: ""; }
+  .side-menu .n { color: var(--muted); font-size: 0.82rem; font-weight: 400; font-variant-numeric: tabular-nums; }
   .views { display: flex; gap: 0.5rem 0.75rem; flex-wrap: wrap; align-items: center; }
   .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px; }
   .seg button { background: none; border: 0; border-radius: 999px; padding: 0.3rem 0.85rem; font-size: 0.86rem; color: var(--sub); white-space: nowrap; }
@@ -731,6 +763,9 @@ const REPORT_JS = `
   var more = document.getElementById('show-more');
   var count = document.getElementById('ranked-count');
   var csv = document.getElementById('ranked-csv');
+  function matches(li, s) {
+    return (s === 'both' || li.dataset.side === s) && !(tickerOnly && tickerOnly.checked && li.dataset.ticker === '0');
+  }
   function render() {
     var total = 0, visible = 0;
     lists.forEach(function (list) {
@@ -738,8 +773,7 @@ const REPORT_JS = `
       list.hidden = !active;
       if (!active) return;
       list.querySelectorAll('.pick').forEach(function (li) {
-        var ok = (side === 'both' || li.dataset.side === side) &&
-          !(tickerOnly && tickerOnly.checked && li.dataset.ticker === '0');
+        var ok = matches(li, side);
         if (ok) total++;
         li.hidden = !ok || total > shown;
         if (!li.hidden) visible++;
@@ -758,15 +792,12 @@ const REPORT_JS = `
       render();
     });
   });
-  // The side picker reads as the heading's last word, so it is sized to the
-  // option showing rather than the longest one.
-  function fitSide() {
-    var probe = document.createElement('span');
-    probe.className = 'side-probe';
-    probe.textContent = sidePick.options[sidePick.selectedIndex].text;
-    sidePick.parentNode.appendChild(probe);
-    sidePick.style.width = Math.ceil(probe.getBoundingClientRect().width) + 'px';
-    probe.remove();
+  // Side picker. The select holds the value, and is what shows without
+  // scripts; a button and listbox styled to the page stand in for it.
+  function sideCount(v) {
+    var n = 0, list = document.querySelector('[data-list="' + view + '"]');
+    if (list) list.querySelectorAll('.pick').forEach(function (li) { if (matches(li, v)) n++; });
+    return n;
   }
   if (sidePick) {
     try {
@@ -774,12 +805,97 @@ const REPORT_JS = `
       if (savedSide && sidePick.querySelector('option[value="' + savedSide + '"]')) sidePick.value = savedSide;
     } catch (e) {}
     side = sidePick.value;
+
+    var wrap = sidePick.parentNode;
+    var sideBtn = document.createElement('button');
+    var sideLabel = document.createElement('span');
+    var chev = document.createElement('span');
+    var menu = document.createElement('ul');
+    sideBtn.type = 'button';
+    sideBtn.className = 'side-btn';
+    sideBtn.setAttribute('aria-haspopup', 'listbox');
+    sideBtn.setAttribute('aria-expanded', 'false');
+    sideBtn.setAttribute('aria-controls', 'unusual-side-menu');
+    chev.className = 'chev';
+    chev.setAttribute('aria-hidden', 'true');
+    sideBtn.appendChild(sideLabel);
+    sideBtn.appendChild(chev);
+    menu.id = 'unusual-side-menu';
+    menu.className = 'side-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', 'Which trades to rank');
+    menu.hidden = true;
+    var opts = Array.prototype.map.call(sidePick.options, function (o) {
+      var li = document.createElement('li');
+      var text = document.createElement('span');
+      var n = document.createElement('span');
+      li.setAttribute('role', 'option');
+      li.tabIndex = -1;
+      li.dataset.value = o.value;
+      text.textContent = o.text;
+      n.className = 'n';
+      li.appendChild(text);
+      li.appendChild(n);
+      menu.appendChild(li);
+      return li;
+    });
+    wrap.appendChild(sideBtn);
+    wrap.appendChild(menu);
+    wrap.classList.add('enhanced');
+
+    var syncSide = function () {
+      sideLabel.textContent = sidePick.options[sidePick.selectedIndex].text;
+      opts.forEach(function (li) { li.setAttribute('aria-selected', String(li.dataset.value === sidePick.value)); });
+    };
+    var focusOpt = function (i) { opts[(i + opts.length) % opts.length].focus({ preventScroll: true }); };
+    var openMenu = function () {
+      opts.forEach(function (li) { li.querySelector('.n').textContent = sideCount(li.dataset.value); });
+      menu.hidden = false;
+      sideBtn.setAttribute('aria-expanded', 'true');
+      // Keep it on screen on narrow phones
+      menu.style.left = '';
+      var over = menu.getBoundingClientRect().right - (document.documentElement.clientWidth - 16);
+      if (over > 0) menu.style.left = (menu.offsetLeft - over) + 'px';
+      focusOpt(sidePick.selectedIndex);
+    };
+    var closeMenu = function (refocus) {
+      if (menu.hidden) return;
+      menu.hidden = true;
+      sideBtn.setAttribute('aria-expanded', 'false');
+      if (refocus) sideBtn.focus({ preventScroll: true });
+    };
+    var choose = function (v) {
+      if (v !== sidePick.value) {
+        sidePick.value = v;
+        sidePick.dispatchEvent(new Event('change'));
+      }
+      closeMenu(true);
+    };
+
     sidePick.addEventListener('change', function () {
-      side = sidePick.value; shown = PAGE; fitSide(); render();
+      side = sidePick.value; shown = PAGE; syncSide(); render();
       try { localStorage.setItem('unusual-side', side); } catch (e) {}
     });
-    fitSide();
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSide);
+    sideBtn.addEventListener('click', function () { if (menu.hidden) openMenu(); else closeMenu(true); });
+    sideBtn.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openMenu(); }
+    });
+    menu.addEventListener('click', function (e) {
+      var li = e.target.closest('[role="option"]');
+      if (li) choose(li.dataset.value);
+    });
+    menu.addEventListener('keydown', function (e) {
+      var i = opts.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); focusOpt(i + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); focusOpt(i - 1); }
+      else if (e.key === 'Home') { e.preventDefault(); focusOpt(0); }
+      else if (e.key === 'End') { e.preventDefault(); focusOpt(opts.length - 1); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) choose(opts[i].dataset.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+      else if (e.key === 'Tab') closeMenu(false);
+    });
+    document.addEventListener('click', function (e) { if (!wrap.contains(e.target)) closeMenu(false); });
+    syncSide();
   }
   if (tickerOnly) tickerOnly.addEventListener('change', function () { shown = PAGE; render(); });
   if (more) more.addEventListener('click', function () { shown += PAGE; render(); });
