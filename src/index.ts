@@ -14,6 +14,7 @@ import { reportSalesCommand } from "./commands/report-sales.js";
 import { reportHtmlCommand } from "./commands/report-html.js";
 import { ocrCatchupCommand } from "./commands/ocr-catchup.js";
 import { ocrCheckTickersCommand } from "./commands/ocr-check-tickers.js";
+import { attentionReviewCommand } from "./commands/attention-review.js";
 
 // Load environment variables
 config();
@@ -46,6 +47,7 @@ program.addCommand(reportSalesCommand);
 program.addCommand(reportHtmlCommand);
 program.addCommand(ocrCatchupCommand);
 program.addCommand(ocrCheckTickersCommand);
+program.addCommand(attentionReviewCommand);
 
 // Parse arguments
 program.parse();

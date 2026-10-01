@@ -1,3 +1,5 @@
+import * as fs from "fs/promises";
+import * as path from "path";
 import type { FMPTrade } from "../types/index.js";
 import type { ReviewFiling } from "../data/government-provider.js";
 import { looksLikeListedStock } from "../data/sec-symbols.js";
@@ -9,6 +11,8 @@ import { overrideKey, TICKER_OVERRIDES_FILE, type OcrFilingRecord } from "../ocr
 export type AttentionKind = "ocr-failed" | "ocr-needs-review" | "ocr-pending" | "ticker-unresolved" | "ticker-checks-off";
 
 export interface AttentionItem {
+  /** Stable while the problem stays the same; marking it reviewed hides it until it changes */
+  key: string;
   kind: AttentionKind;
   /** Touches a trade newly disclosed in this report */
   inThisReport: boolean;
@@ -48,6 +52,7 @@ function ocrFilingItems(inputs: AttentionInputs): AttentionItem[] {
     const id = record.id;
     if (record.status === "failed") {
       items.push({
+        key: `ocr-failed:${record.chamber}:${id}`,
         kind: "ocr-failed", inThisReport, trades: 0, member: record.member, filing: record.url,
         title: `${record.member}'s scanned filing of ${record.filingDate} couldn't be read`,
         detail: `OCR failed${record.error ? `: ${record.error}` : ""}. Its trades are missing from the report.`,
@@ -60,6 +65,8 @@ function ocrFilingItems(inputs: AttentionInputs): AttentionItem[] {
     }
     const pages = record.pages.filter((p) => p.status === "needs-review" || p.status === "error").map((p) => p.page);
     items.push({
+      // The pages are part of the key, so a different set of bad pages shows up again
+      key: `ocr-review:${record.chamber}:${id}:pages-${pages.join("-")}`,
       kind: "ocr-needs-review", inThisReport, trades: rows.length, member: record.member, filing: record.url,
       title: `${record.member}'s scanned filing of ${record.filingDate}: ${pages.length === 1 ? "page" : "pages"} ${pages.join(", ")} read poorly`,
       detail: `${plural(rows.length, "trade")} came from it, but some rows on ${pages.length === 1 ? "that page" : "those pages"} were rejected, so trades may be missing or wrong.`,
@@ -78,6 +85,7 @@ function pendingItem(inputs: AttentionInputs): AttentionItem[] {
   if (!pending.length) return [];
   const names = [...new Set(pending.map((f) => f.member))];
   return [{
+    key: `ocr-pending:${pending.map((f) => `${f.chamber}:${f.id}`).sort().join(",")}`,
     kind: "ocr-pending", inThisReport: false, trades: null,
     title: `${plural(pending.length, "scanned filing")} waiting for OCR`,
     detail: `From ${names.slice(0, 5).join(", ")}${names.length > 5 ? ` and ${names.length - 5} more` : ""}. Their trades aren't in the report yet. The daily run reads up to OCR_DAILY_MAX_PAGES pages, so a large filing waits.`,
@@ -110,6 +118,7 @@ function tickerItems(inputs: AttentionInputs): AttentionItem[] {
         ? `Read as ${read}, which the SEC lists for a differently named company. Kept because the filing writes it.`
         : "Reads as a listed stock, but the name matched no single listed company, so it has no ticker and gets no company size, sector or committee score.";
     return {
+      key: `ticker:${overrideKey(asset)}`,
       kind: "ticker-unresolved" as const,
       inThisReport: rows.some(inputs.isNewlyDisclosed),
       trades: rows.length, asset,
@@ -128,6 +137,7 @@ export function buildAttention(inputs: AttentionInputs): AttentionItem[] {
   const items: AttentionItem[] = [];
   if (!inputs.tickerChecksOn) {
     items.push({
+      key: "ticker-checks-off",
       kind: "ticker-checks-off", inThisReport: false, trades: null,
       title: "OCR'd tickers weren't checked against the SEC symbol lists",
       detail: "The SEC lists couldn't be loaded, so misread tickers from scanned filings go unchecked.",
@@ -135,8 +145,43 @@ export function buildAttention(inputs: AttentionInputs): AttentionItem[] {
     });
   }
   items.push(...ocrFilingItems(inputs), ...pendingItem(inputs), ...tickerItems(inputs));
+  for (const item of items) {
+    item.fix.push(`If it's been looked into and needs nothing more, mark it reviewed: \`${CLI} attention:review "${item.key}" --note "<why>"\``);
+  }
   return items.sort((a, b) =>
     Number(b.inThisReport) - Number(a.inThisReport)
     || ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind)
     || (b.trades ?? 0) - (a.trades ?? 0));
+}
+
+// ── Reviewed items ──────────────────────────────────────────────────────────
+
+export const REVIEWED_FILE = path.join("data", "reviewed-attention.json");
+
+export interface ReviewNote {
+  note: string;
+  reviewedAt: string;
+}
+
+/** Items marked reviewed, by key: a plain JSON object in data/reviewed-attention.json. */
+export async function loadReviewed(file = REVIEWED_FILE): Promise<Record<string, ReviewNote>> {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf-8")) as Record<string, ReviewNote>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") console.warn(`⚠️  Ignoring ${file}: ${(err as Error).message}`);
+    return {};
+  }
+}
+
+export async function saveReviewed(reviewed: Record<string, ReviewNote>, file = REVIEWED_FILE): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify(reviewed, null, 2)}\n`, "utf-8");
+}
+
+/** Split items into those still open and those someone marked reviewed. */
+export function splitReviewed(items: AttentionItem[], reviewed: Record<string, ReviewNote>): { open: AttentionItem[]; hidden: AttentionItem[] } {
+  return {
+    open: items.filter((i) => !reviewed[i.key]),
+    hidden: items.filter((i) => reviewed[i.key]),
+  };
 }

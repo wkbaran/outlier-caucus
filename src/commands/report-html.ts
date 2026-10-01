@@ -12,7 +12,7 @@ import { createGovernmentProvider } from "../data/government-provider.js";
 import { createEdgarProvider } from "../data/edgar-provider.js";
 import { filingKey, loadOcrResults, loadScannedFilings, runDailyOcr } from "../ocr/ocr-filings.js";
 import { loadSymbolDirectory } from "../data/sec-symbols.js";
-import { buildAttention } from "../output/attention.js";
+import { buildAttention, loadReviewed, splitReviewed } from "../output/attention.js";
 
 function createTradeProvider() {
   if (process.env.DATA_SOURCE === "fmp") {
@@ -287,14 +287,14 @@ export const reportHtmlCommand = new Command("report:html")
 
       // ── What this run couldn't resolve, with how to fix it ───────────────
       const ocrResults = await loadOcrResults();
-      const attention = buildAttention({
+      const { open: attention, hidden: reviewedAttention } = splitReviewed(buildAttention({
         trades: allTrades,
         isNewlyDisclosed,
         ocrResults,
         pendingFilings: (await loadScannedFilings()).filter((f) => !ocrResults[filingKey(f)]),
         tickerChecksOn: (await loadSymbolDirectory()) !== null,
         reportDate: dateStr,
-      });
+      }), await loadReviewed());
       console.log(
         hasPrevious
           ? `   Newly disclosed since the previous report: ${newlyDisclosed.length} trade${newlyDisclosed.length !== 1 ? "s" : ""}`
@@ -471,6 +471,7 @@ export const reportHtmlCommand = new Command("report:html")
         memberLink,
         topWindowDays,
         attention,
+        reviewedHidden: reviewedAttention.length,
       }), null, 2);
       await fs.writeFile(path.join(dateDir, "brief.json"), brief, "utf-8");
       await fs.writeFile(path.join(webDir, "latest.json"), brief, "utf-8");
@@ -516,6 +517,7 @@ export const reportHtmlCommand = new Command("report:html")
         }
         if (attention.length > 10) console.log(`  … ${attention.length - 10} more`);
       }
+      if (reviewedAttention.length) console.log(`   ${reviewedAttention.length} item${reviewedAttention.length === 1 ? "" : "s"} marked reviewed and hidden (attention:review --list)`);
 
       console.log("\n✅ Done.");
     } catch (error) {

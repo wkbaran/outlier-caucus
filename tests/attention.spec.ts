@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { buildAttention } from "../src/output/attention.js";
+import { buildAttention, loadReviewed, saveReviewed, splitReviewed } from "../src/output/attention.js";
 import { buildHtmlReport } from "../src/output/html.js";
 import { buildSymbolDirectory } from "../src/data/sec-symbols.js";
 import { applyTickerCheck, loadTickerOverrides, type OcrFilingRecord } from "../src/ocr/ocr-filings.js";
@@ -78,4 +78,26 @@ test("the report lists them at the foot, with commands as code", async ({ page }
 
   await page.setContent(build([]));
   await expect(page.locator("#checks")).toHaveCount(0);
+});
+
+test("a reviewed item stays hidden until its problem changes", async () => {
+  const items = buildAttention(inputs);
+  const review = items.find((i) => i.kind === "ocr-needs-review")!;
+  expect(review.key).toBe("ocr-review:house:9116256:pages-2");
+  expect(review.fix.at(-1)).toContain(`attention:review "${review.key}"`);
+
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rev-")), "reviewed-attention.json");
+  expect(await loadReviewed(file)).toEqual({});
+  await saveReviewed({ [review.key]: { note: "amount left blank on the scan", reviewedAt: "2026-10-01T00:00:00Z" } }, file);
+  const reviewed = await loadReviewed(file);
+
+  const { open, hidden } = splitReviewed(items, reviewed);
+  expect(hidden.map((i) => i.key)).toEqual([review.key]);
+  expect(open.map((i) => i.kind)).toEqual(["ticker-unresolved", "ocr-pending"]);
+
+  // Page 1 going bad too is a new problem, so the filing shows again
+  const worse = record("needs-review");
+  worse.pages = worse.pages.map((p) => ({ ...p, status: "needs-review" as const }));
+  const again = buildAttention({ ...inputs, ocrResults: { "house:9116256": worse } });
+  expect(splitReviewed(again, reviewed).open.some((i) => i.kind === "ocr-needs-review")).toBe(true);
 });

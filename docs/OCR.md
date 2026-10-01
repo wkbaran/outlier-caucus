@@ -48,6 +48,20 @@ What the check can't settle (a misspelled name, a company the SEC no longer list
 }
 ```
 
+### Marking an item reviewed
+
+Some items have no fix: a scan that's illegible, or one where the filer left a field blank. Once you've looked, mark the item reviewed with its key (shown in the run log's fix steps and in `latest.json`):
+
+```bash
+node dist/index.js attention:review "ocr-review:house:9116218:pages-1" --note "Amount left blank on the scan"
+node dist/index.js attention:review --list            # what's marked reviewed
+node dist/index.js attention:review "<key>" --undo    # show it again
+```
+
+Reviewed items are kept in `data/reviewed-attention.json` and left out of the report, the brief (which counts them in `summary.reviewedHidden`) and the log. A key describes the problem, so a filing with a different set of bad pages, or a new ticker problem, shows up again.
+
+### Override details
+
 Names compare ignoring case and spacing. An override beats every other check and is marked `manual`. Filings read later pick it up when they're read; for trades already stored, run `ocr:check-tickers --write`. The next published report includes the change, or rebuild the current one with `report:html --no-fetch-trades --date <date> --publish`. In the Docker deployment the file lives in the state directory's `data/`, and commands run with `docker exec outlier-caucus node dist/index.js …`.
 
 ## Accuracy
