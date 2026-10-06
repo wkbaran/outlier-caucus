@@ -132,3 +132,29 @@ test("the side menu works from the keyboard and shows counts", async ({ page }) 
   await page.locator("#every-h").click();
   await expect(menu).toBeHidden();
 });
+
+test("lots scored together show as one row, with their amounts added up", async ({ page }) => {
+  // Two identical line items, as a scanned filing listing the same buy twice reads
+  const lot = trade({ symbol: "HD", owner: "Spouse", transactionDate: daysAgo(2) });
+  const lots = [lot, { ...lot }];
+  const single = trade({});
+  const groupId = `house-jane-doe|HD|purchase|${lot.transactionDate}`;
+  const grouped = buildHtmlReport({
+    report: {
+      generatedAt: new Date().toISOString(),
+      totalTradesAnalyzed: 3,
+      scoredTrades: [...lots.map((t) => ({ ...scored(t), groupId })), scored(single)],
+    } as unknown as AnalysisReport,
+    purchaseTrades: [...lots, single].map((t) => ({ trade: t, party: "Republican" })),
+    salesTrades: [],
+    dateLabel: "Today", dateStr: daysAgo(0),
+    isNewlyDisclosed: (t) => t.symbol === "HD",
+    previousRunLabel: "Yesterday",
+  });
+  await page.setContent(grouped);
+  await expect(page.locator('[data-tab="tab-purchases"]')).toHaveText("Purchases 2");
+  const hd = page.locator("#tab-purchases tbody tr", { hasText: "HD" });
+  await expect(hd).toHaveCount(1);
+  await expect(hd).toHaveClass(/row-new/);
+  await expect(hd.locator(".sale-amount")).toHaveText("$2K–$30K 2 trades");
+});

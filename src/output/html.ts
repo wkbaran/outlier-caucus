@@ -231,6 +231,47 @@ export function buildScoreLookup(report: AnalysisReport): Map<string, AnalyzedTr
   return lookup;
 }
 
+/** A table row: one trade, or a member's lots scored together as one. */
+export interface TradeRow {
+  trade: FMPTrade;
+  party: string | undefined;
+  /** Every lot in the row, earliest first. */
+  lots: FMPTrade[];
+  /** The lots' amounts added up, or the lone trade's own amount. */
+  amount: string | undefined;
+  lastDate: string | undefined;
+}
+
+/**
+ * Collapse the lots the analysis scored together (same group id) into one row,
+ * in the order each group first appears. Without a score lookup every trade
+ * stays its own row.
+ */
+export function combineLots(
+  rows: Array<{ trade: FMPTrade; party: string | undefined }>,
+  scoreLookup?: Map<string, AnalyzedTrade>
+): TradeRow[] {
+  return splitByGroupId(rows, (r) => scoreLookup?.get(tradeKey(r.trade))?.groupId).map((list) => {
+    const sorted = [...list].sort((a, b) => (a.trade.transactionDate ?? "").localeCompare(b.trade.transactionDate ?? ""));
+    const lots = sorted.map((r) => r.trade);
+    return {
+      trade: lots[0],
+      party: sorted[0].party,
+      lots,
+      amount: lots.length > 1 ? sumAmounts(lots.map((t) => t.amount)) ?? undefined : lots[0].amount,
+      lastDate: lots[lots.length - 1].transactionDate,
+    };
+  });
+}
+
+/** "2 trades" beside a combined row's amount. */
+function lotsTagHtml(row: TradeRow): string {
+  const n = row.lots.length;
+  return n > 1
+    ? ` <span class="lots-tag" title="${n} line items on the disclosure, scored together as one trade; the amount adds them up">${n} trades</span>`
+    : "";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CSV export
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,22 +324,23 @@ function cardCsvRow(group: TradeGroup): Array<string | number> {
 }
 
 const SALE_CSV_HEADERS = [
-  "Date", "Symbol", "Type", "Amount", "Trader", "Party", "Owner", "Options",
+  "Date", "Last Date", "Trades", "Symbol", "Type", "Amount", "Trader", "Party", "Owner", "Options",
   "Score", "Flags", "Asset Type", "Asset Description", "Filing Link",
 ];
 
 function saleCsvRow(
-  trade: FMPTrade,
-  party: string | undefined,
+  { trade, party, lots, amount, lastDate }: TradeRow,
   analyzed: AnalyzedTrade | undefined
 ): Array<string | number> {
   const name = `${trade.firstName ?? ""} ${trade.lastName ?? ""}`.trim();
   const owner = trade.owner && trade.owner.toLowerCase() !== "self" ? trade.owner : "";
   return [
     trade.transactionDate ?? "",
+    lastDate ?? "",
+    lots.length,
     trade.symbol ?? "",
     typeLabel(trade.type),
-    trade.amount ?? "",
+    amount ?? "",
     name,
     party ?? "",
     owner,
@@ -307,7 +349,7 @@ function saleCsvRow(
     analyzed ? flagLabels(analyzed.score.flags).join("; ") : "",
     assetTypeLabel(trade.assetType),
     trade.assetDescription ?? "",
-    trade.link ?? "",
+    distinct(lots.map((t) => t.link), " "),
   ];
 }
 
@@ -353,13 +395,13 @@ function sideLabel(type: string | undefined): string {
 }
 
 function renderSaleRow(
-  trade: FMPTrade,
-  party: string | undefined,
+  row: TradeRow,
   exchangeMap: Map<string, string>,
   memberLink?: MemberLinker,
   scoreLookup?: Map<string, AnalyzedTrade>,
   isNew = false
 ): string {
+  const { trade, party } = row;
   const name = esc(`${trade.firstName ?? ""} ${trade.lastName ?? ""}`.trim());
   const memberUrl = memberLink?.(trade) ?? null;
   const nameHtml = memberUrl ? `<a href="${esc(memberUrl)}">${name}</a>` : name;
@@ -374,9 +416,9 @@ function renderSaleRow(
 
   return `
 <tr${isNew ? ' class="row-new"' : ""}>
-  <td class="sale-date">${esc(shortDate(trade.transactionDate, THIS_YEAR))}${isNew ? ' <span class="new-tag" title="Disclosed since the previous report">New</span>' : ""}</td>
+  <td class="sale-date">${esc(dateSpan(trade.transactionDate, row.lastDate, THIS_YEAR))}${isNew ? ' <span class="new-tag" title="Disclosed since the previous report">New</span>' : ""}</td>
   <td class="sale-sym">${symbolHtml(trade, exchangeMap)}</td>
-  <td class="sale-amount">${amountHtml(trade.amount)}</td>
+  <td class="sale-amount">${amountHtml(row.amount)}${lotsTagHtml(row)}</td>
   <td class="sale-trader"><div class="trader-cell">${nameHtml}${partyTagHtml(party)}${signals}</div></td>
   <td class="sale-desc">${esc(tidyAsset(trade.assetDescription))}${filingLink ? ` ${filingLink}` : ""}</td>
 </tr>`;
@@ -391,7 +433,7 @@ function tableFootHtml(rows: number, emptyText: string): string {
 }
 
 function tradeTableHtml(
-  rows: Array<{ trade: FMPTrade; party: string | undefined }>,
+  rows: TradeRow[],
   exchangeMap: Map<string, string>,
   memberLink?: MemberLinker,
   scoreLookup?: Map<string, AnalyzedTrade>,
@@ -401,7 +443,7 @@ function tradeTableHtml(
         <table>
           <thead><tr><th>Traded</th><th>Ticker</th><th>Amount</th><th>Member</th><th>Asset</th></tr></thead>
           <tbody>
-            ${rows.map(({ trade, party }) => renderSaleRow(trade, party, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed(trade))).join("\n            ")}
+            ${rows.map((row) => renderSaleRow(row, exchangeMap, memberLink, scoreLookup, row.lots.some(isNewlyDisclosed))).join("\n            ")}
           </tbody>
         </table>
       </div>`;
@@ -1144,8 +1186,9 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
   // since the last report however long ago it was traded. Member pages keep
   // the full history.
   const inTable = ({ trade }: { trade: FMPTrade }) => isRecent(trade) || isNewlyDisclosed(trade);
-  const tablePurchases = purchaseTrades.filter(inTable);
-  const tableSales = salesTrades.filter(inTable);
+  // A member's lots scored together show as one row, as they do in the ranking.
+  const tablePurchases = combineLots(purchaseTrades.filter(inTable), scoreLookup);
+  const tableSales = combineLots(salesTrades.filter(inTable), scoreLookup);
 
   const rankedCsv: Record<string, { filename: string; csv: string }> = {};
   for (const [view, list, stem] of [["top", topTrades, "most-unusual"], ["committee", committeeRelevant, "committee-overlap"]] as const) {
@@ -1159,8 +1202,8 @@ export function buildHtmlReport(opts: HtmlReportOptions): string {
 
   const csvSections = {
     ...rankedCsv,
-    "recent-purchases": { filename: `recent-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tablePurchases.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
-    "recent-sales": { filename: `recent-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tableSales.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup.get(tradeKey(trade))))) },
+    "recent-purchases": { filename: `recent-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tablePurchases.map((row) => saleCsvRow(row, scoreLookup.get(tradeKey(row.trade))))) },
+    "recent-sales": { filename: `recent-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, tableSales.map((row) => saleCsvRow(row, scoreLookup.get(tradeKey(row.trade))))) },
   };
 
   const dates = report.scoredTrades.map((t) => t.trade.transactionDate).filter((d): d is string => !!d).sort();
@@ -1378,16 +1421,18 @@ export function buildMemberPage(opts: MemberPageOptions): string {
     dateStr = new Date().toISOString().split("T")[0],
   } = opts;
 
-  const purchases = trades.filter((t) => { const ty = (t.trade.type || "").toLowerCase(); return ty.includes("purchase") || ty.includes("exchange"); });
-  const sales = trades.filter((t) => (t.trade.type || "").toLowerCase().includes("sale"));
+  // A member's lots scored together show as one row.
+  const purchases = combineLots(trades.filter((t) => { const ty = (t.trade.type || "").toLowerCase(); return ty.includes("purchase") || ty.includes("exchange"); }), scoreLookup);
+  const sales = combineLots(trades.filter((t) => (t.trade.type || "").toLowerCase().includes("sale")), scoreLookup);
+  const total = combineLots(trades, scoreLookup).length;
   const memberSlug = opts.memberSlug ?? memberKey(memberName);
 
   const csvSections = {
-    [`${memberSlug}-purchases`]: { filename: `${memberSlug}-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, purchases.map(({ trade, party: p }) => saleCsvRow(trade, p, scoreLookup?.get(tradeKey(trade))))) },
-    [`${memberSlug}-sales`]: { filename: `${memberSlug}-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, sales.map(({ trade, party: p }) => saleCsvRow(trade, p, scoreLookup?.get(tradeKey(trade))))) },
+    [`${memberSlug}-purchases`]: { filename: `${memberSlug}-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, purchases.map((row) => saleCsvRow(row, scoreLookup?.get(tradeKey(row.trade))))) },
+    [`${memberSlug}-sales`]: { filename: `${memberSlug}-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, sales.map((row) => saleCsvRow(row, scoreLookup?.get(tradeKey(row.trade))))) },
   };
 
-  function table(rows: typeof trades, title: string, id: string, csvKey: string): string {
+  function table(rows: TradeRow[], title: string, id: string, csvKey: string): string {
     if (!rows.length) return "";
     return `
   <section class="section" id="${id}">
@@ -1400,16 +1445,17 @@ export function buildMemberPage(opts: MemberPageOptions): string {
       <table>
         <thead><tr><th>Traded</th><th>Ticker</th><th>Amount</th><th>Asset</th></tr></thead>
         <tbody>
-          ${rows.map(({ trade }) => {
+          ${rows.map((row) => {
+            const { trade } = row;
             const owner = trade.owner && trade.owner.toLowerCase() !== "self" ? trade.owner : "";
             const analyzed = scoreLookup?.get(tradeKey(trade));
             const signals = [analyzed ? traderBadgesHtml(analyzed.score) : "", optionTagHtml(trade), owner ? `<span class="owner-tag" title="${esc(ownerCode(owner).title)}">${esc(owner)}</span>` : ""].filter(Boolean).join(" ");
             const filingLink = filingLinkHtml(trade);
             return `
           <tr>
-            <td class="sale-date">${esc(shortDate(trade.transactionDate, THIS_YEAR))}</td>
+            <td class="sale-date">${esc(dateSpan(trade.transactionDate, row.lastDate, THIS_YEAR))}</td>
             <td class="sale-sym">${symbolHtml(trade, exchangeMap)}</td>
-            <td class="sale-amount">${amountHtml(trade.amount)}</td>
+            <td class="sale-amount">${amountHtml(row.amount)}${lotsTagHtml(row)}</td>
             <td class="sale-desc">${esc(tidyAsset(trade.assetDescription))}${signals ? ` ${signals}` : ""}${filingLink ? ` ${filingLink}` : ""}</td>
           </tr>`;
           }).join("")}
@@ -1422,7 +1468,7 @@ export function buildMemberPage(opts: MemberPageOptions): string {
   return listPage({
     title: `${esc(chamber)} ${esc(memberName)}, ${esc(dateLabel)}`,
     headingHtml: `${esc(chamber)} ${esc(memberName)} ${partyTagHtml(party)}`,
-    statsHtml: `<span><strong>${purchases.length}</strong> purchases</span><span><strong>${sales.length}</strong> sales</span><span><strong>${trades.length}</strong> total</span>`,
+    statsHtml: `<span><strong>${purchases.length}</strong> purchases</span><span><strong>${sales.length}</strong> sales</span><span><strong>${total}</strong> total</span>`,
     crumbsHtml: crumbs(indexUrl, reportUrl, dateLabel),
     homeHref: indexUrl ?? reportUrl,
     sectionsHtml: table(purchases, "Purchases", "purchases", `${memberSlug}-purchases`) + table(sales, "Sales", "sales", `${memberSlug}-sales`),
@@ -1449,16 +1495,16 @@ export function buildPartyPage(opts: PartyPageOptions): string {
     dateStr = new Date().toISOString().split("T")[0],
   } = opts;
 
-  const purchases = trades.filter((t) => { const ty = (t.trade.type || "").toLowerCase(); return ty.includes("purchase") || ty.includes("exchange"); });
-  const sales = trades.filter((t) => (t.trade.type || "").toLowerCase().includes("sale"));
+  const purchases = combineLots(trades.filter((t) => { const ty = (t.trade.type || "").toLowerCase(); return ty.includes("purchase") || ty.includes("exchange"); }), scoreLookup);
+  const sales = combineLots(trades.filter((t) => (t.trade.type || "").toLowerCase().includes("sale")), scoreLookup);
 
   const partySlug = label.toLowerCase();
   const csvSections = {
-    [`${partySlug}-purchases`]: { filename: `${partySlug}-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, purchases.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup?.get(tradeKey(trade))))) },
-    [`${partySlug}-sales`]: { filename: `${partySlug}-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, sales.map(({ trade, party }) => saleCsvRow(trade, party, scoreLookup?.get(tradeKey(trade))))) },
+    [`${partySlug}-purchases`]: { filename: `${partySlug}-purchases-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, purchases.map((row) => saleCsvRow(row, scoreLookup?.get(tradeKey(row.trade))))) },
+    [`${partySlug}-sales`]: { filename: `${partySlug}-sales-${dateStr}.csv`, csv: buildCsv(SALE_CSV_HEADERS, sales.map((row) => saleCsvRow(row, scoreLookup?.get(tradeKey(row.trade))))) },
   };
 
-  function table(rows: typeof trades, title: string, id: string, csvKey: string): string {
+  function table(rows: TradeRow[], title: string, id: string, csvKey: string): string {
     if (!rows.length) return "";
     return `
   <section class="section" id="${id}">
@@ -1474,7 +1520,7 @@ export function buildPartyPage(opts: PartyPageOptions): string {
   return listPage({
     title: `${esc(label)} trades, ${esc(dateLabel)}`,
     headingHtml: `${esc(label)} trades`,
-    statsHtml: `<span><strong>${purchases.length.toLocaleString("en-US")}</strong> purchases</span><span><strong>${sales.length.toLocaleString("en-US")}</strong> sales</span><span><strong>${trades.length.toLocaleString("en-US")}</strong> total</span>`,
+    statsHtml: `<span><strong>${purchases.length.toLocaleString("en-US")}</strong> purchases</span><span><strong>${sales.length.toLocaleString("en-US")}</strong> sales</span><span><strong>${combineLots(trades, scoreLookup).length.toLocaleString("en-US")}</strong> total</span>`,
     crumbsHtml: crumbs(indexUrl, reportUrl, dateLabel),
     homeHref: indexUrl ?? reportUrl,
     sectionsHtml: table(purchases, "Purchases", "purchases", `${partySlug}-purchases`) + table(sales, "Sales", "sales", `${partySlug}-sales`),

@@ -270,6 +270,7 @@ export const BASE_CSS = `
   .sale-date { white-space: nowrap; color: var(--sub); width: 8rem; }
   .sale-sym { font-weight: 700; white-space: nowrap; width: 5rem; }
   .sale-amount { white-space: nowrap; }
+  .lots-tag { font-size: 0.75rem; color: var(--muted); margin-left: 0.3rem; cursor: help; }
   .sale-trader { min-width: 11rem; }
   .trader-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem 0.45rem; }
   .sale-desc { color: var(--sub); }
