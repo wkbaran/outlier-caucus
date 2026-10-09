@@ -566,7 +566,7 @@ function renderPick(group: TradeGroup, idx: string, exchangeMap: Map<string, str
     <div class="links">
       ${!many && trade.link ? `<a href="${esc(trade.link)}" target="_blank" rel="noopener noreferrer">Open the filing</a>` : ""}
       ${memberUrl ? `<a href="${esc(memberUrl)}">All of ${esc(name)}'s trades</a>` : ""}
-      ${chart ? `<a href="${esc(chart)}" target="_blank" rel="noopener noreferrer">Chart</a>` : ""}
+      ${chart ? `<a class="chart-link" href="${esc(chart)}" target="_blank" rel="noopener noreferrer">Chart</a>` : ""}
     </div>
   </div>
 </li>`;

@@ -147,6 +147,67 @@ export const THEME_JS = `
     });
   }
 
+  // Ticker and Chart links open TradingView in a panel over the page instead
+  // of a new tab, as the dashboard does. The panel is built on first use. The
+  // link's href stays as the fallback: a modified or middle click skips this
+  // handler and opens the chart in a tab. TradingView's embed is cross-origin,
+  // so the page can only choose what to load; the settings ride in the URL hash.
+  var chartBox = null;
+  function chartEmbedUrl(href) {
+    var symbol = '';
+    try { symbol = new URL(href, location.href).searchParams.get('symbol') || ''; } catch (e) {}
+    var theme = root.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    var settings = {
+      symbol: symbol, interval: 'D', timezone: 'America/New_York',
+      theme: theme, colorTheme: theme, style: '1', autosize: true,
+      hide_side_toolbar: true, allow_symbol_change: true, studies: ['STD;MA%Ribbon']
+    };
+    return 'https://s.tradingview.com/embed-widget/advanced-chart/#' + encodeURIComponent(JSON.stringify(settings));
+  }
+  function buildChart() {
+    var backdrop = document.createElement('div');
+    backdrop.className = 'chart-backdrop';
+    var title = document.createElement('h2');
+    title.className = 'chart-title';
+    var close = document.createElement('button');
+    close.type = 'button'; close.className = 'chart-close'; close.textContent = 'Close';
+    var frame = document.createElement('iframe');
+    frame.title = 'TradingView chart';
+    var panel = document.createElement('aside');
+    panel.className = 'chart-panel'; panel.tabIndex = -1; panel.setAttribute('aria-label', 'Chart');
+    var head = document.createElement('div');
+    head.className = 'chart-head';
+    head.append(title, close);
+    panel.append(head, frame);
+    backdrop.hidden = true; panel.hidden = true;
+    document.body.append(backdrop, panel);
+    function hide() {
+      panel.hidden = true; backdrop.hidden = true;
+      document.body.classList.remove('chart-open');
+      frame.src = 'about:blank';
+    }
+    close.addEventListener('click', hide);
+    backdrop.addEventListener('click', hide);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) hide(); });
+    return { panel: panel, backdrop: backdrop, title: title, frame: frame };
+  }
+  function openChart(label, href) {
+    if (!chartBox) chartBox = buildChart();
+    chartBox.title.textContent = label;
+    chartBox.frame.src = chartEmbedUrl(href);
+    chartBox.backdrop.hidden = false; chartBox.panel.hidden = false;
+    document.body.classList.add('chart-open');
+    chartBox.panel.focus();
+  }
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a.symbol-link, a.chart-link');
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    var symbol = '';
+    try { symbol = new URL(a.href).searchParams.get('symbol') || ''; } catch (err) {}
+    openChart(symbol.replace(/^.*:/, '') || a.textContent, a.href);
+  });
+
   var csvDataEl = document.getElementById('csv-data');
   var csvData = null;
   if (csvDataEl) { try { csvData = JSON.parse(csvDataEl.textContent); } catch (e) { csvData = null; } }
@@ -275,6 +336,17 @@ export const BASE_CSS = `
   .trader-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem 0.45rem; }
   .sale-desc { color: var(--sub); }
   .symbol-link { text-decoration: none; }
+
+  /* Chart panel (TradingView in an iframe). Display rules sit on :not([hidden]) so [hidden] still hides them. */
+  body.chart-open { overflow: hidden; }
+  .chart-backdrop { position: fixed; inset: 0; z-index: 60; background: color-mix(in oklab, var(--ground) 55%, transparent); backdrop-filter: blur(2px); }
+  .chart-panel { position: fixed; inset: 4vh 4vw; z-index: 61; flex-direction: column; outline: none; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.25rem; box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); }
+  .chart-panel:not([hidden]) { display: flex; }
+  .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+  .chart-title { margin: 0; font-size: 1.25rem; font-weight: 600; }
+  .chart-close { background: var(--raised); border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.8rem; font-size: 0.82rem; }
+  .chart-close:hover { border-color: var(--line-strong); }
+  .chart-panel iframe { flex: 1; width: 100%; border: 0; border-radius: 6px; }
   .symbol-link:hover { text-decoration: underline; text-decoration-color: var(--signal); }
   .no-ticker { font-size: 0.75rem; font-weight: 400; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 0.3rem; white-space: nowrap; }
   .filing-link { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }

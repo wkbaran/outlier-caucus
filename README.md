@@ -36,7 +36,7 @@ Everything is public and free. There are no paid APIs.
 | Company size and industry | [SEC EDGAR](https://www.sec.gov/edgar) | Ticker to company lookup, SIC code mapped to a sector, public float as the market cap |
 | Members, parties, committees | [unitedstates/congress-legislators](https://github.com/unitedstates/congress-legislators) | Current legislators and committee membership |
 | Which committee oversees what | This repo | A hand-built map from each committee to the sectors and industries it oversees (`src/data/committee-sector-taxonomy.ts`) |
-| Charts | [TradingView](https://www.tradingview.com/) | Links only |
+| Charts | [TradingView](https://www.tradingview.com/) | Embedded in a panel over the page |
 
 [Financial Modeling Prep](https://financialmodelingprep.com/) can stand in for the government and EDGAR sources with `DATA_SOURCE=fmp` and an API key.
 

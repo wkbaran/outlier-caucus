@@ -165,3 +165,28 @@ test("the tickers in the new-trades band link to their chart", async ({ page }) 
   await expect(link).toHaveText(lateFiled.symbol!);
   await expect(link).toHaveAttribute("href", `https://www.tradingview.com/chart/?symbol=${lateFiled.symbol}`);
 });
+
+test("a ticker opens its chart in a panel over the page, not a new tab", async ({ page, context }) => {
+  await page.setContent(html);
+  const opened: unknown[] = [];
+  context.on("page", (p) => opened.push(p));
+  await page.locator(".fresh-band a.symbol-link").click();
+
+  const panel = page.locator(".chart-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".chart-title")).toHaveText(lateFiled.symbol!);
+  const src = (await panel.locator("iframe").getAttribute("src"))!;
+  expect(src).toMatch(/^https:\/\/s\.tradingview\.com\/embed-widget\/advanced-chart\/#/);
+  expect(decodeURIComponent(src.split("#")[1])).toContain(`"symbol":"${lateFiled.symbol}"`);
+  expect(opened).toHaveLength(0);
+
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(panel.locator("iframe")).toHaveAttribute("src", "about:blank");
+
+  // The table's tickers use the same panel, and Close works too.
+  await page.locator("#tab-purchases tbody tr:visible a.symbol-link").first().click();
+  await expect(panel).toBeVisible();
+  await page.locator(".chart-close").click();
+  await expect(panel).toBeHidden();
+});
