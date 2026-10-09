@@ -158,3 +158,10 @@ test("lots scored together show as one row, with their amounts added up", async 
   await expect(hd).toHaveClass(/row-new/);
   await expect(hd.locator(".sale-amount")).toHaveText("$2K–$30K 2 trades");
 });
+
+test("the tickers in the new-trades band link to their chart", async ({ page }) => {
+  await page.setContent(html);
+  const link = page.locator(".fresh-band .filing-list .what a.symbol-link");
+  await expect(link).toHaveText(lateFiled.symbol!);
+  await expect(link).toHaveAttribute("href", `https://www.tradingview.com/chart/?symbol=${lateFiled.symbol}`);
+});

@@ -1070,6 +1070,7 @@ function freshHtml(
   previousRunLabel: string | undefined,
   memberLink: MemberLinker | undefined,
   groupIdOf: (trade: FMPTrade) => string | undefined = () => undefined,
+  exchangeMap: Map<string, string> = new Map(),
 ): string {
   // Lots scored together show and count as one trade, with their amounts added up.
   const newly = splitByGroupId(newlyItems, (n) => groupIdOf(n.trade)).map((lots) => {
@@ -1121,7 +1122,7 @@ function freshHtml(
           return `
           <li>
             <span class="side${side === "Sold" ? " sold" : ""}">${side}</span>
-            <span class="what">${trade.symbol ? `<b>${esc(trade.symbol)}</b>` : ""}<span class="desc">${esc(tidyAsset(trade.assetDescription))}</span></span>
+            <span class="what">${trade.symbol ? `<b>${symbolHtml(trade, exchangeMap)}</b>` : ""}<span class="desc">${esc(tidyAsset(trade.assetDescription))}</span></span>
             <span class="size">${amountHtml(amount)}</span>
             <span class="when">${lots > 1 ? `${lots} trades, ` : "Traded "}${esc(dateSpan(trade.transactionDate, lastDate, THIS_YEAR))}${esc(owner)}</span>
           </li>`;
@@ -1257,7 +1258,7 @@ ${siteHeader(indexUrl ?? "#", picker)}
 <main>
   <section class="fresh-band" aria-labelledby="fresh-h">
     <div class="wrap fresh">
-      ${freshHtml(newly, previousRunLabel, memberLink, (t) => scoreLookup.get(tradeKey(t))?.groupId)}
+      ${freshHtml(newly, previousRunLabel, memberLink, (t) => scoreLookup.get(tradeKey(t))?.groupId, exchangeMap)}
       ${newChecks ? `<p class="fresh-check"><a href="#checks">${newChecks === 1 ? "One thing" : `${numberWord(newChecks)} things`} in these new trades could not be confirmed</a></p>` : ""}
     </div>
   </section>
