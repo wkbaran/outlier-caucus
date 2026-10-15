@@ -26,6 +26,11 @@ const dir = buildSymbolDirectory(
     { ticker: "AVD", cik: 5981, title: "AMERICAN VANGUARD CORP" },
     { ticker: "IBIT", cik: 1980994, title: "iShares Bitcoin Trust ETF" },
     { ticker: "BR", cik: 1383312, title: "Broadridge Financial Solutions, Inc." },
+    { ticker: "DPZ", cik: 1286681, title: "DOMINOS PIZZA INC" },
+    { ticker: "CRH", cik: 849395, title: "CRH PUBLIC LTD CO" },
+    { ticker: "KIM", cik: 879101, title: "KIMCO REALTY CORP" },
+    { ticker: "OPBK", cik: 1431567, title: "OP Bancorp" },
+    { ticker: "SAN", cik: 891478, title: "BANCO SANTANDER, S.A." },
   ],
   ["IVV", "VOO"]
 );
@@ -94,4 +99,20 @@ test("bonds, notes and funds don't take a company's stock ticker", () => {
   expect(findByName(dir, "VERIZON COMMUNICATIONS INC HYBRID PERPETUAL")).toBeUndefined();
   expect(findByName(dir, "VANGUARD TOTAL STOCK MARKET INDEX FD ADMIRAL SHARES")).toBeUndefined();
   expect(findByName(dir, "ISHARES BITCOIN TRUST ETF")?.ticker).toBe("IBIT");
+});
+
+test("OCR spacing quirks in a name still find the company", () => {
+  // A lost apostrophe leaves a stray S
+  expect(findByName(dir, "DOMINO S PIZZA, INC. CMN")?.ticker).toBe("DPZ");
+  // "PUBLIC LIMITED COMPANY" cut short and split
+  expect(findByName(dir, "CRH PUBL C LIMITED COMPANY CMN")?.ticker).toBe("CRH");
+  // An operating partnership takes its parent's ticker, but only at the end of the name
+  expect(findByName(dir, "KIMCO REALTY OP LLC CMN")?.ticker).toBe("KIM");
+  expect(findByName(dir, "OP BANCORP CMN")?.ticker).toBe("OPBK");
+  // A stray S before the legal form is dropped as usual; only a failed lookup retries it as an apostrophe
+  expect(nameTokens("INDUSTRIA DE DISENO TEXTIL S ADR CMN")).toEqual(["INDUSTRIA", "DISENO", "TEXTIL"]);
+  expect(nameTokens("DOMINO S PIZZA, INC. CMN", true)).toEqual(["DOMINOS", "PIZZA"]);
+  // "S A" is a legal form, not a lost apostrophe
+  expect(nameTokens("BANCO SANTANDER S A ADR CMN")).toEqual(["BANCO", "SANTANDER"]);
+  expect(findByName(dir, "BANCO SANTANDER S.A. ADR CMN")?.ticker).toBe("SAN");
 });

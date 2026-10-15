@@ -68,8 +68,12 @@ const NAME_ABBREVIATIONS: Record<string, string> = {
 
 const NOISE_WORDS = [...NAME_NOISE];
 
-/** Significant words of a company or asset name: "Walmart Inc. - Common Stock [ST]" → ["WALMART"] */
-export function nameTokens(text: string): string[] {
+/**
+ * Significant words of a company or asset name: "Walmart Inc. - Common Stock [ST]" → ["WALMART"].
+ * A stray S after a word is usually a legal form cut short ("INDUSTRIA DE DISENO TEXTIL S ADR"),
+ * so it is dropped, unless `joinLostApostrophe` reads it as a lost apostrophe ("DOMINO S PIZZA" is DOMINOS).
+ */
+export function nameTokens(text: string, joinLostApostrophe = false): string[] {
   const words = text
     .toUpperCase()
     .replace(/\([^)]*\)|\[[^\]]*\]|\/[A-Z]{2,3}\/?/g, " ")
@@ -79,6 +83,7 @@ export function nameTokens(text: string): string[] {
     // "MOODY'S" is MOODYS; "O'REILLY" is O REILLY, as the SEC writes it
     .replace(/'S\b/g, "S")
     .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\b([A-Z]{3,}) S\b(?! [A-Z]\b)/g, joinLostApostrophe ? "$1S" : "$&")
     // Initials are one word: "U.S. BANCORP", "N V R INC", "A.O. SMITH"
     .replace(/\b[A-Z](?: [A-Z]\b)+/g, (m) => m.replace(/ /g, ""))
     .trim()
@@ -90,7 +95,9 @@ export function nameTokens(text: string): string[] {
     const last = words[words.length - 1];
     if (NAME_NOISE.has(last) || /^\d+$/.test(last) || last.length < 2) { words.pop(); continue; }
     if (NOISE_WORDS.some((n) => n.length > last.length && n.startsWith(last))) { words.pop(); continue; }
-    if (last === "PUBLIC") { words.pop(); continue; } // "PUBLIC LIMITED COMPANY", cut short
+    if (last === "PUBLIC" || (last.length >= 4 && "PUBLIC".startsWith(last))) { words.pop(); continue; } // "PUBLIC LIMITED COMPANY", cut short
+    // An operating partnership is named for its parent: "KIMCO REALTY OP LLC". Only at the end, since OP Bancorp is a company.
+    if (last === "OP") { words.pop(); continue; }
     break;
   }
   return words.filter((w) => w.length > 1 && !NAME_NOISE.has(w) && !/^\d+$/.test(w));
@@ -170,9 +177,9 @@ export function findByName(dir: SymbolDirectory, asset: string): SecCompany | un
   if (NOT_EQUITY.test(asset)) return undefined;
   const words = nameTokens(asset);
   if (!words.length) return undefined;
-  const key = words.join(" ");
 
-  const exact = dir.byName.get(key) ?? dir.bySortedName.get([...words].sort().join(" "));
+  const exactMatch = (w: string[]) => dir.byName.get(w.join(" ")) ?? dir.bySortedName.get([...w].sort().join(" "));
+  const exact = exactMatch(words) ?? exactMatch(nameTokens(asset, true));
   if (exact) return only(exact);
 
   const joined = words.join("");
