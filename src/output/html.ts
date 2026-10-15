@@ -720,7 +720,7 @@ const REPORT_CSS = `
   .browse a:hover span:first-child { text-decoration: underline; text-decoration-color: var(--signal); text-underline-offset: 3px; }
   .browse .n { color: var(--muted); }
   .runs { display: grid; gap: 6px; height: 7rem; max-width: 30rem; }
-  .runs a { display: flex; flex-direction: column; justify-content: end; height: 100%; text-decoration: none; gap: 4px; }
+  .runs a { display: flex; flex-direction: column; justify-content: end; height: 100%; min-width: 0; text-decoration: none; gap: 4px; }
   .runs .bar { background: var(--line-strong); border-radius: 2px 2px 0 0; min-height: 2px; }
   .runs a:hover .bar, .runs a[aria-current] .bar { background: var(--signal); }
   .runs .d { font-size: 0.68rem; color: var(--muted); text-align: center; white-space: nowrap; }
@@ -751,9 +751,12 @@ const REPORT_CSS = `
     .why, .who, .amt { grid-column: 2 / 4; text-align: left; }
     .who small, .amt small { display: inline; margin-left: 0.4rem; }
     .pick-detail { padding-left: 5.75rem; }
-    .elsewhere { grid-template-columns: 1fr; }
+    .elsewhere { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 520px) {
+    /* Fourteen dates don't fit a phone's width: label every other bar, counting back from the newest */
+    .runs { padding: 0 0.5rem; }
+    .runs a:nth-last-child(even) .d { visibility: hidden; }
     .filing-list li { grid-template-columns: 4rem 1fr; }
     .filing-list .size { grid-column: 2; text-align: left; }
     .pick-detail { padding-left: 0; }
