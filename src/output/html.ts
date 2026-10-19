@@ -1352,14 +1352,50 @@ ${csvDataScript(csvSections)}
 // Member and party pages
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The counts under the heading double as the page's navigation: on a long
+// member page Sales starts twenty-odd screens down, so the strip sticks to
+// the top, marks the section in view, and offers a way back up.
 const LIST_PAGE_CSS = `
-  .list-page .section { padding-top: 2rem; }
+  .list-page .section { padding-top: 2rem; scroll-margin-top: 3.25rem; }
+  .list-page .page-head { padding-bottom: 0.15rem; }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+  .jump-band { position: sticky; top: 0; z-index: 20; background: var(--ground); border-bottom: 1px solid transparent; }
+  .jump-band.stuck { border-bottom-color: var(--line); }
+  .jump { display: flex; align-items: stretch; gap: 1.5rem; color: var(--sub); }
+  .jump > * { padding: 0.6rem 0; white-space: nowrap; }
+  .jump strong { color: var(--ink); font-weight: 600; }
+  .jump a:hover { color: var(--ink); }
+  .jump a[aria-current="true"] { color: var(--ink); text-decoration: none; box-shadow: inset 0 -2px 0 var(--signal); }
+  .jump .to-top { margin-left: auto; visibility: hidden; }
+  .jump-band.stuck .to-top { visibility: visible; }
+  @media (max-width: 30rem) { .jump { gap: 1.1rem; } .jump-band.stuck .jump-total { display: none; } }
+`;
+
+// Marks the section in view and shows "Back to top" once the page head has scrolled away.
+const JUMP_JS = `
+(function () {
+  var band = document.querySelector(".jump-band");
+  if (!band) return;
+  var links = Array.prototype.slice.call(band.querySelectorAll("a[data-section]"));
+  var sections = links.map(function (a) { return document.getElementById(a.dataset.section); });
+  var ticking = false;
+  function update() {
+    ticking = false;
+    var top = band.getBoundingClientRect().top;
+    band.classList.toggle("stuck", top <= 0 && window.scrollY > 0);
+    var edge = window.innerHeight / 3, current = -1;
+    sections.forEach(function (sec, i) { if (sec && sec.getBoundingClientRect().top <= edge) current = i; });
+    links.forEach(function (a, i) { a.setAttribute("aria-current", String(i === current)); });
+  }
+  window.addEventListener("scroll", function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+  update();
+})();
 `;
 
 function listPage(opts: {
   title: string;
   headingHtml: string;
-  statsHtml: string;
+  counts: { purchases: number; sales: number; total: number };
   crumbsHtml: string;
   homeHref: string;
   sectionsHtml: string;
@@ -1379,9 +1415,11 @@ ${siteHeader(opts.homeHref, `<nav class="crumbs" aria-label="Back">${opts.crumbs
   <div class="page-head-band">
     <div class="wrap page-head">
       <h1 class="site-title">${opts.headingHtml}</h1>
-      <div class="stats-bar">${opts.statsHtml}</div>
     </div>
   </div>
+  <nav class="jump-band" aria-label="Sections">
+    <div class="wrap jump">${jumpLinkHtml("purchases", opts.counts.purchases, "purchases")}${jumpLinkHtml("sales", opts.counts.sales, "sales")}<span class="jump-total"><strong>${opts.counts.total.toLocaleString("en-US")}</strong> total</span><a class="to-top" href="#top">Back to top</a></div>
+  </nav>
   <div class="wrap">
     ${opts.sectionsHtml}
   </div>
@@ -1391,8 +1429,15 @@ ${siteHeader(opts.homeHref, `<nav class="crumbs" aria-label="Back">${opts.crumbs
 </footer>
 ${csvDataScript(opts.csvSections)}
 <script>${THEME_JS}</script>
+<script>${JUMP_JS}</script>
 </body>
 </html>`;
+}
+
+/** A count in the jump strip; a link only when the section has rows to jump to. */
+function jumpLinkHtml(id: string, count: number, noun: string): string {
+  const text = `<strong>${count.toLocaleString("en-US")}</strong> ${noun}`;
+  return count ? `<a href="#${id}" data-section="${id}">${text}</a>` : `<span>${text}</span>`;
 }
 
 function crumbs(indexUrl: string | undefined, reportUrl: string, dateLabel: string): string {
@@ -1475,7 +1520,7 @@ export function buildMemberPage(opts: MemberPageOptions): string {
   return listPage({
     title: `${esc(chamber)} ${esc(memberName)}, ${esc(dateLabel)}`,
     headingHtml: `${esc(chamber)} ${esc(memberName)} ${partyTagHtml(party)}`,
-    statsHtml: `<span><strong>${purchases.length}</strong> purchases</span><span><strong>${sales.length}</strong> sales</span><span><strong>${total}</strong> total</span>`,
+    counts: { purchases: purchases.length, sales: sales.length, total },
     crumbsHtml: crumbs(indexUrl, reportUrl, dateLabel),
     homeHref: indexUrl ?? reportUrl,
     sectionsHtml: table(purchases, "Purchases", "purchases", `${memberSlug}-purchases`) + table(sales, "Sales", "sales", `${memberSlug}-sales`),
@@ -1529,7 +1574,7 @@ export function buildPartyPage(opts: PartyPageOptions): string {
   return listPage({
     title: `${esc(label)} trades, ${esc(dateLabel)}`,
     headingHtml: `${esc(label)} trades`,
-    statsHtml: `<span><strong>${purchases.length.toLocaleString("en-US")}</strong> purchases</span><span><strong>${sales.length.toLocaleString("en-US")}</strong> sales</span><span><strong>${combineLots(trades, scoreLookup).length.toLocaleString("en-US")}</strong> total</span>`,
+    counts: { purchases: purchases.length, sales: sales.length, total: combineLots(trades, scoreLookup).length },
     crumbsHtml: crumbs(indexUrl, reportUrl, dateLabel),
     homeHref: indexUrl ?? reportUrl,
     sectionsHtml: table(purchases, "Purchases", "purchases", `${partySlug}-purchases`) + table(sales, "Sales", "sales", `${partySlug}-sales`),
