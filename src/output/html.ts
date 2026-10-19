@@ -1416,12 +1416,14 @@ export interface MemberPageOptions {
   memberLink?: MemberLinker;
   scoreLookup?: Map<string, AnalyzedTrade>;
   dateStr?: string;
+  /** Marks rows disclosed since the previous report */
+  isNewlyDisclosed?: (trade: FMPTrade) => boolean;
 }
 
 export function buildMemberPage(opts: MemberPageOptions): string {
   const {
     memberName, chamber, party, trades, dateLabel, reportUrl, indexUrl,
-    exchangeMap = new Map(), scoreLookup,
+    exchangeMap = new Map(), scoreLookup, isNewlyDisclosed = () => false,
     dateStr = new Date().toISOString().split("T")[0],
   } = opts;
 
@@ -1455,9 +1457,10 @@ export function buildMemberPage(opts: MemberPageOptions): string {
             const analyzed = scoreLookup?.get(tradeKey(trade));
             const signals = [analyzed ? traderBadgesHtml(analyzed.score) : "", optionTagHtml(trade), owner ? `<span class="owner-tag" title="${esc(ownerCode(owner).title)}">${esc(owner)}</span>` : ""].filter(Boolean).join(" ");
             const filingLink = filingLinkHtml(trade);
+            const isNew = row.lots.some(isNewlyDisclosed);
             return `
-          <tr>
-            <td class="sale-date">${esc(dateSpan(trade.transactionDate, row.lastDate, THIS_YEAR))}</td>
+          <tr${isNew ? ' class="row-new"' : ""}>
+            <td class="sale-date">${esc(dateSpan(trade.transactionDate, row.lastDate, THIS_YEAR))}${isNew ? ' <span class="new-tag" title="Disclosed since the previous report">New</span>' : ""}</td>
             <td class="sale-sym">${symbolHtml(trade, exchangeMap)}</td>
             <td class="sale-amount">${amountHtml(row.amount)}${lotsTagHtml(row)}</td>
             <td class="sale-desc">${esc(tidyAsset(trade.assetDescription))}${signals ? ` ${signals}` : ""}${filingLink ? ` ${filingLink}` : ""}</td>
@@ -1490,12 +1493,14 @@ export interface PartyPageOptions {
   memberLink?: MemberLinker;
   scoreLookup?: Map<string, AnalyzedTrade>;
   dateStr?: string;
+  /** Marks rows disclosed since the previous report */
+  isNewlyDisclosed?: (trade: FMPTrade) => boolean;
 }
 
 export function buildPartyPage(opts: PartyPageOptions): string {
   const {
     partyLabel: label, trades, dateLabel, reportUrl, indexUrl,
-    exchangeMap = new Map(), memberLink, scoreLookup,
+    exchangeMap = new Map(), memberLink, scoreLookup, isNewlyDisclosed,
     dateStr = new Date().toISOString().split("T")[0],
   } = opts;
 
@@ -1517,7 +1522,7 @@ export function buildPartyPage(opts: PartyPageOptions): string {
       <span class="section-count">${plural(rows.length, "trade")}</span>
       ${csvButtonHtml(csvKey)}
     </div>
-    ${tradeTableHtml(rows, exchangeMap, memberLink, scoreLookup)}
+    ${tradeTableHtml(rows, exchangeMap, memberLink, scoreLookup, isNewlyDisclosed)}
   </section>`;
   }
 

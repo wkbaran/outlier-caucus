@@ -388,6 +388,7 @@ export const reportHtmlCommand = new Command("report:html")
           exchangeMap,
           scoreLookup,
           dateStr,
+          isNewlyDisclosed,
         });
         await fs.writeFile(path.join(dateDir, memberFile), memberHtml, "utf-8");
         memberCount++;
@@ -426,6 +427,7 @@ export const reportHtmlCommand = new Command("report:html")
           memberLink,
           scoreLookup,
           dateStr,
+          isNewlyDisclosed,
         });
         await fs.writeFile(path.join(dateDir, pg.file), partyHtml, "utf-8");
         console.log(`   ${pg.label} → ${pg.file} (${filtered.length} trades)`);
