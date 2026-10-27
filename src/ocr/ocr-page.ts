@@ -247,8 +247,12 @@ export function pageQuality(validation: Validation, readable: boolean): number {
 /** Extract rows from model output: a JSON array, or `{ page_readable, rows }`, possibly fenced. */
 export function parseModelResponse(text: string): { readable: boolean; rows: OcrRow[] } | null {
   const trimmed = text.trim();
+  // Fenced blocks, last first: prose before the fence can quote "return []", which the
+  // first-bracket-to-last-bracket slice would run into the fenced answer
+  const fenced = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1].trim()).reverse();
   const candidates = [
     trimmed,
+    ...fenced,
     trimmed.slice(trimmed.indexOf("["), trimmed.lastIndexOf("]") + 1),
     trimmed.slice(trimmed.indexOf("{"), trimmed.lastIndexOf("}") + 1),
   ];

@@ -103,6 +103,10 @@ test("model responses parse from strict JSON, fenced JSON, or a bare array", () 
   expect(parseModelResponse('```json\n{"page_readable": true, "rows": [{"asset": "X"}]}\n```')?.rows).toHaveLength(1);
   expect(parseModelResponse('[{"asset": "X"}]')?.readable).toBe(true);
   expect(parseModelResponse("I could not read this page.")).toBeNull();
+  // A signature page: the prose quotes the prompt's "return []" before the fenced answer
+  expect(parseModelResponse(
+    "This page has only a signature line.\n\nTherefore, per instructions:\n> If the page has no transaction rows, return [].\n\n```json\n[]\n```"
+  )).toEqual({ readable: true, rows: [] });
 });
 
 test("scanned PDF pages render, and sideways pages are rotated before OCR", () => {
