@@ -14,6 +14,7 @@ import { createEdgarProvider } from "../data/edgar-provider.js";
 import { filingKey, loadOcrResults, loadScannedFilings, runDailyOcr } from "../ocr/ocr-filings.js";
 import { loadSymbolDirectory } from "../data/sec-symbols.js";
 import { buildAttention, loadReviewed, splitReviewed } from "../output/attention.js";
+import { loadFetchFailures } from "../data/fetch-status.js";
 
 function createTradeProvider() {
   if (process.env.DATA_SOURCE === "fmp") {
@@ -205,7 +206,8 @@ export const reportHtmlCommand = new Command("report:html")
           }
 
           const newCount = tradeData.senateTrades.length + tradeData.houseTrades.length;
-          if (options.skipUnchanged && newCount === previousCount) {
+          // A failed fetch still publishes, so the report says its filings are out of date
+          if (options.skipUnchanged && newCount === previousCount && (await loadFetchFailures()).length === 0) {
             console.log("No new trades since the last run — skipping report generation and publish.");
             return;
           }
@@ -307,6 +309,7 @@ export const reportHtmlCommand = new Command("report:html")
         pendingFilings: (await loadScannedFilings()).filter((f) => !ocrResults[filingKey(f)]),
         tickerChecksOn: (await loadSymbolDirectory()) !== null,
         reportDate: dateStr,
+        fetchFailures: await loadFetchFailures(),
       }), await loadReviewed());
       console.log(
         hasPrevious

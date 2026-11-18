@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { buildSymbolDirectory, checkTicker, findByName, namesMatch, nameTokens } from "../src/data/sec-symbols.js";
+import { buildSymbolDirectory, checkTicker, findByName, mergeSymbolLists, namesMatch, nameTokens } from "../src/data/sec-symbols.js";
 import { applyTickerCheck } from "../src/ocr/ocr-filings.js";
 
 // Entries as the SEC lists them, in its order (main ticker first)
@@ -115,4 +115,51 @@ test("OCR spacing quirks in a name still find the company", () => {
   // "S A" is a legal form, not a lost apostrophe
   expect(nameTokens("BANCO SANTANDER S A ADR CMN")).toEqual(["BANCO", "SANTANDER"]);
   expect(findByName(dir, "BANCO SANTANDER S.A. ADR CMN")?.ticker).toBe("SAN");
+});
+
+test("accented letters match the SEC's plain spelling", () => {
+  const withMdlz = buildSymbolDirectory([{ ticker: "MDLZ", cik: 1103982, title: "Mondelez International, Inc." }], []);
+  expect(nameTokens("Mondelēz International, Inc. - Class A Common Stock (MDLZ)")).toEqual(["MONDELEZ", "INTERNATIONAL"]);
+  expect(checkTicker(withMdlz, "Mondelēz International, Inc. - Class A Common Stock (MDLZ)", "MDLZ")).toEqual({ symbol: "MDLZ", check: "verified" });
+});
+
+test("an over-the-counter foreign share written on the filing is otc, not unknown", () => {
+  expect(checkTicker(dir, "Tokyo Electron Ltd Ordinary Shares (TOELF) [ST]", "TOELF")).toEqual({ symbol: "TOELF", check: "otc" });
+  expect(checkTicker(dir, "Bayer AG Sponsored ADR (BAYRY)", "BAYRY")).toEqual({ symbol: "BAYRY", check: "otc" });
+  // Not written on the filing, or not the OTC shape: still unknown
+  expect(checkTicker(dir, "Tokyo Electron Ltd Ordinary Shares", "TOELF").check).toBe("unknown-symbol");
+  expect(checkTicker(dir, "ENGIE SA ORD (ENGF) [ST]", "ENGF").check).toBe("unknown-symbol");
+});
+
+test("a ticker that dropped off the SEC list still checks trades made while it was listed", () => {
+  const before = { companies: [{ ticker: "WBD", cik: 1437107, title: "Warner Bros. Discovery, Inc." }, { ticker: "WMT", cik: 104169, title: "Walmart Inc." }], funds: ["IVV"] };
+  const merged = mergeSymbolLists(before, [{ ticker: "WMT", cik: 104169, title: "Walmart Inc." }], ["VOO"]);
+  expect(merged.retired).toEqual([{ ticker: "WBD", cik: 1437107, title: "Warner Bros. Discovery, Inc." }]);
+  expect(merged.funds.sort()).toEqual(["IVV", "VOO"]);
+  const after = buildSymbolDirectory(merged.companies, merged.funds, merged.retired);
+  expect(checkTicker(after, "Warner Bros. Discovery, Inc. - Series A Common Stock (WBD)", "WBD")).toEqual({ symbol: "WBD", check: "verified" });
+  // A ticker back on the list leaves the retired ones
+  expect(mergeSymbolLists(merged, before.companies, []).retired).toEqual([]);
+});
+
+test("a retired company never takes a name lookup from a current one", () => {
+  const d = buildSymbolDirectory(
+    [{ ticker: "NEWCO", cik: 2, title: "Acme Widgets Inc" }],
+    [],
+    [{ ticker: "OLDCO", cik: 1, title: "Acme Widgets Corp" }, { ticker: "GONE", cik: 3, title: "Gone Away Industries" }]
+  );
+  expect(findByName(d, "ACME WIDGETS INC CMN")?.ticker).toBe("NEWCO");
+  expect(findByName(d, "GONE AWAY INDUSTRIES CMN")?.ticker).toBe("GONE");
+});
+
+test("a name finds the common stock even when the SEC lists a preferred share first", () => {
+  const d = buildSymbolDirectory([
+    { ticker: "ARES.PRB", cik: 1176948, title: "Ares Management Corp" },
+    { ticker: "ARES", cik: 1176948, title: "Ares Management Corp" },
+    { ticker: "CHSCL", cik: 823277, title: "CHS INC" },
+    { ticker: "CHSCP", cik: 823277, title: "CHS INC" },
+  ], []);
+  expect(findByName(d, "ARES MANAGEMENT CORPORATION CMN CLASS A")?.ticker).toBe("ARES");
+  // Still found by its own ticker
+  expect(checkTicker(d, "Ares Management Corp 6.75% Pfd Series B", "ARES.PRB").symbol).toBe("ARES.PRB");
 });

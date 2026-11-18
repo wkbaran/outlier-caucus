@@ -6,6 +6,7 @@ import { buildAttention, loadReviewed, saveReviewed, splitReviewed } from "../sr
 import { buildHtmlReport } from "../src/output/html.js";
 import { buildSymbolDirectory } from "../src/data/sec-symbols.js";
 import { applyTickerCheck, loadTickerOverrides, type OcrFilingRecord } from "../src/ocr/ocr-filings.js";
+import { nextFetchStatus } from "../src/data/fetch-status.js";
 import type { AnalysisReport } from "../src/services/analysis-service.js";
 import type { FMPTrade } from "../src/types/index.js";
 
@@ -100,4 +101,35 @@ test("a reviewed item stays hidden until its problem changes", async () => {
   worse.pages = worse.pages.map((p) => ({ ...p, status: "needs-review" as const }));
   const again = buildAttention({ ...inputs, ocrResults: { "house:9116256": worse } });
   expect(splitReviewed(again, reviewed).open.some((i) => i.kind === "ocr-needs-review")).toBe(true);
+});
+
+test("a failed fetch leads the list until a fetch works, one item per outage", () => {
+  let status = nextFetchStatus({}, "senate", "the eFD search returned HTTP 403", "2026-10-27T13:00:00Z");
+  status = nextFetchStatus(status, "senate", "the eFD search returned HTTP 403", "2026-10-28T13:00:00Z");
+  expect(status.senate).toMatchObject({ since: "2026-10-27T13:00:00Z", lastFailedAt: "2026-10-28T13:00:00Z", failedRuns: 2 });
+
+  const items = buildAttention({ ...inputs, fetchFailures: Object.values(status) as never });
+  expect(items[0]).toMatchObject({ kind: "fetch-failed", key: "fetch-failed:senate:2026-10-27" });
+  expect(items[0].title).toBe("Senate filings couldn't be fetched (2 runs since 2026-10-27)");
+  expect(items[0].detail).toContain("HTTP 403");
+
+  expect(nextFetchStatus(status, "senate", null)).toEqual({});
+  expect(nextFetchStatus(status, "house", null)).toEqual(status);
+});
+
+test("an asset-type code doesn't split one asset into two", async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ovr-")), "ticker-overrides.json");
+  fs.writeFileSync(file, JSON.stringify({ "Revity, Inc. Common Stock (RVTY) [ST]": "RVTY" }));
+  const overrides = await loadTickerOverrides(file);
+  const dir = buildSymbolDirectory([{ ticker: "RVTY", cik: 31791, title: "REVVITY, INC." }], []);
+  const plain: FMPTrade = { source: "ocr", assetDescription: "Revity, Inc. Common Stock (RVTY)", ocrTicker: "RVTY" };
+  expect(applyTickerCheck(plain, dir, overrides)).toMatchObject({ symbol: "RVTY", tickerCheck: "manual" });
+
+  const wbd = (asset: string): FMPTrade => ({ source: "ocr", assetDescription: asset, symbol: "WBD", ocrTicker: "WBD", tickerCheck: "unknown-symbol" });
+  const items = buildAttention({ ...inputs, ocrResults: {}, pendingFilings: [], trades: [
+    wbd("Warner Bros. Discovery, Inc. - Series A Common Stock (WBD)"),
+    wbd("Warner Bros. Discovery, Inc. - Series A Common Stock (WBD) [ST]"),
+  ] });
+  expect(items).toHaveLength(1);
+  expect(items[0].trades).toBe(2);
 });

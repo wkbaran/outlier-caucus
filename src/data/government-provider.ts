@@ -16,6 +16,7 @@ import { extractTickerFromDescription } from "./ticker-extract.js";
 import type { FMPTrade } from "../types/index.js";
 import type { TradeSourceProvider } from "./trade-source.js";
 import { loadData, saveData } from "../utils/storage.js";
+import { recordFetchResult } from "./fetch-status.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const HOUSE_INDEX_URL = (year: number) =>
@@ -35,8 +36,12 @@ const REVIEW_FILE = "unparseable-filings.json";
 // fetched; seen-ID tracking keeps the overlap cheap.
 export const LOOKBACK_DAYS = 30;
 
-const USER_AGENT =
-  "outlier-caucus/1.0 (bill.baran@gmail.com) government-data-scraper";
+// The contact goes in from the environment (the same SEC_USER_AGENT the SEC lookups use),
+// never from the code, since the repo is public. Read per request, after .env has loaded.
+export function userAgent(): string {
+  const contact = process.env.SEC_USER_AGENT?.trim();
+  return contact ? `outlier-caucus/1.0 (${contact}) government-data-scraper` : "outlier-caucus/1.0 government-data-scraper";
+}
 
 // ── Run report ─────────────────────────────────────────────────────────────
 export interface ScrapeRunReport {
@@ -131,7 +136,7 @@ function log(chamber: string, msg: string) {
 export async function fetchWithUA(url: string, options?: RequestInit) {
   return fetch(url, {
     ...options,
-    headers: { "User-Agent": USER_AGENT, ...options?.headers },
+    headers: { "User-Agent": userAgent(), ...options?.headers },
   });
 }
 
@@ -239,22 +244,31 @@ function reformatDate(d: string): string {
 // ║  HOUSE CLERK                                                             ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-async function fetchHouseIndexDocIds(year: number, sinceDate: Date): Promise<
+async function fetchHouseIndexDocIds(year: number, sinceDate: Date, errors: string[] = []): Promise<
   Array<{ docId: string; firstName: string; lastName: string; filingDate: string; year: number }>
 > {
   log("House", `Downloading ${year} filing index ZIP...`);
-  const resp = await fetchWithUA(HOUSE_INDEX_URL(year));
-  if (!resp.ok) {
-    log("House", `  Warning: index ZIP for ${year} returned HTTP ${resp.status}`);
+  let zipBuf: Buffer;
+  try {
+    const resp = await fetchWithUA(HOUSE_INDEX_URL(year));
+    if (!resp.ok) {
+      log("House", `  Warning: index ZIP for ${year} returned HTTP ${resp.status}`);
+      errors.push(`the ${year} filing index returned HTTP ${resp.status}`);
+      return [];
+    }
+    zipBuf = Buffer.from(await resp.arrayBuffer());
+  } catch (e) {
+    log("House", `  Warning: index ZIP for ${year} couldn't be downloaded: ${(e as Error).message}`);
+    errors.push(`the ${year} filing index couldn't be downloaded: ${(e as Error).message}`);
     return [];
   }
-  const zipBuf = Buffer.from(await resp.arrayBuffer());
   log("House", `  Index ZIP: ${(zipBuf.length / 1024).toFixed(0)} KB`);
 
   // Unzip in memory — the ZIP has a simple structure (1-2 files)
   const xmlContent = extractXmlFromZip(zipBuf);
   if (!xmlContent) {
     log("House", "  Could not extract XML from ZIP");
+    errors.push(`the ${year} filing index ZIP held no readable XML`);
     return [];
   }
 
@@ -465,7 +479,8 @@ function formatEfdDate(d: Date): string {
 async function fetchSenatePtrGuids(
   cookie: string,
   sinceDate: Date,
-  paperFilings: ReviewCandidate[] = []
+  paperFilings: ReviewCandidate[] = [],
+  errors: string[] = []
 ): Promise<Array<{ guid: string; firstName: string; lastName: string; filedDate: string }>> {
   // The AJAX search API is a DataTables endpoint: POST form data with
   // start/length paging, filtered server-side by submission date. (GET
@@ -509,6 +524,7 @@ async function fetchSenatePtrGuids(
 
     if (!resp.ok) {
       log("Senate", `  ⚠️  Search API returned HTTP ${resp.status} — Senate filings NOT fetched this run`);
+      errors.push(`the eFD search returned HTTP ${resp.status}`);
       break;
     }
 
@@ -517,6 +533,7 @@ async function fetchSenatePtrGuids(
       json = await resp.json();
     } catch {
       log("Senate", "  ⚠️  Search API returned non-JSON — Senate filings NOT fetched this run");
+      errors.push("the eFD search returned something other than JSON");
       break;
     }
 
@@ -766,10 +783,19 @@ export class GovernmentProvider implements TradeSourceProvider {
     log("Senate", `Fetching filings since ${effectiveSince.toISOString().split("T")[0]}` +
       (effectiveSince < sinceDate ? ` (${LOOKBACK_DAYS}-day lookback)` : ""));
 
-    // Accept terms
-    const cookie = await acceptSenatEfdTerms();
+    // Accept terms. A failure here or in the search is kept in data/fetch-status.json,
+    // so the report says Senate filings are out of date until a fetch works again.
+    let cookie: string | null;
+    try {
+      cookie = await acceptSenatEfdTerms();
+    } catch (e) {
+      log("Senate", `⚠️  Could not reach eFD (${(e as Error).message}) — skipping Senate fetch`);
+      await recordFetchResult("senate", `eFD couldn't be reached: ${(e as Error).message}`);
+      return [];
+    }
     if (!cookie) {
       log("Senate", "⚠️  Could not accept eFD terms — skipping Senate fetch");
+      await recordFetchResult("senate", "the eFD terms page couldn't be accepted");
       return [];
     }
     log("Senate", "Session established");
@@ -780,7 +806,16 @@ export class GovernmentProvider implements TradeSourceProvider {
 
     // Fetch new PTR GUIDs from search
     const review: ReviewCandidate[] = [];
-    const entries = await fetchSenatePtrGuids(cookie, effectiveSince, review);
+    const searchErrors: string[] = [];
+    let entries: Awaited<ReturnType<typeof fetchSenatePtrGuids>>;
+    try {
+      entries = await fetchSenatePtrGuids(cookie, effectiveSince, review, searchErrors);
+    } catch (e) {
+      log("Senate", `  ⚠️  Search failed (${(e as Error).message}) — Senate filings NOT fetched this run`);
+      searchErrors.push(`the eFD search failed: ${(e as Error).message}`);
+      entries = [];
+    }
+    await recordFetchResult("senate", searchErrors[0] ?? null);
     log("Senate", `${entries.length} PTR(s) from search (${entries.filter(e => seen.has(e.guid)).length} already seen)`);
 
     const trades: FMPTrade[] = [];
@@ -826,10 +861,13 @@ export class GovernmentProvider implements TradeSourceProvider {
       docId: string; firstName: string; lastName: string; filingDate: string; year: number;
     }> = [];
 
+    const indexErrors: string[] = [];
     for (const year of houseIndexYears(effectiveSince)) {
-      const entries = await fetchHouseIndexDocIds(year, effectiveSince);
+      const entries = await fetchHouseIndexDocIds(year, effectiveSince, indexErrors);
       allEntries.push(...entries);
     }
+    // Kept in data/fetch-status.json, so the report says House filings are out of date
+    await recordFetchResult("house", indexErrors[0] ?? null);
 
     const newEntries = allEntries.filter(e => !seen.has(e.docId));
     log("House", `${allEntries.length} PTRs in date range, ${newEntries.length} new`);

@@ -334,10 +334,14 @@ export function mergeOcrTrades(tradeData: StoredTrades, outcome: FilingOcrOutcom
 
 export const TICKER_OVERRIDES_FILE = path.join("data", "ticker-overrides.json");
 
-/** Asset name as written → ticker, or "" for none. Keys compare case- and spacing-insensitively. */
+/**
+ * Asset name as written → ticker, or "" for none. Keys compare case- and spacing-insensitively,
+ * and ignore a trailing asset-type code, which the same filer adds on one filing and not the
+ * next ("Revity, Inc. Common Stock (RVTY) [ST]").
+ */
 export type TickerOverrides = Map<string, string>;
 
-export const overrideKey = (asset: string) => asset.replace(/\s+/g, " ").trim().toUpperCase();
+export const overrideKey = (asset: string) => asset.replace(/\s*\[[A-Z]{2,4}\]\s*$/i, "").replace(/\s+/g, " ").trim().toUpperCase();
 
 /**
  * Hand-set tickers from data/ticker-overrides.json, a plain JSON object such as

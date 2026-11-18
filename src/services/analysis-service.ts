@@ -74,18 +74,19 @@ function parseAmountRange(
   if (!amount) return null;
 
   const cleaned = amount.replace(/[$,]/g, "");
-  const numbers = cleaned.match(/(\d+)/g);
+  // Cents belong to the number: "$710.52" is one amount, not 710 to 52
+  const numbers = cleaned.match(/\d+(?:\.\d+)?/g);
 
   if (!numbers || numbers.length === 0) return null;
 
   if (numbers.length === 1) {
-    const value = parseInt(numbers[0], 10);
+    const value = parseFloat(numbers[0]);
     return { low: value, high: value };
   }
 
   return {
-    low: parseInt(numbers[0], 10),
-    high: parseInt(numbers[1], 10),
+    low: parseFloat(numbers[0]),
+    high: parseFloat(numbers[1]),
   };
 }
 

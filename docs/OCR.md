@@ -17,7 +17,7 @@ Structured output is deliberately not used: constraining the model with Ollama's
 
 ## Ticker checks
 
-A misread ticker is worse than a missing one: the trade gets the wrong company's size and sector, and counts toward the wrong stock's rarity. So each OCR'd row's ticker is checked against [`company_tickers.json`](https://www.sec.gov/files/company_tickers.json) and [`company_tickers_mf.json`](https://www.sec.gov/files/company_tickers_mf.json) from the SEC, cached in `data/sec-symbols.json` and refreshed weekly (needs `SEC_USER_AGENT`). Names are compared on their significant words, ignoring legal forms and security descriptions such as "Inc", "Common Stock" or "Sponsored ADR". The outcome is stored on the trade as `tickerCheck`, with the ticker as read in `ocrTicker`:
+A misread ticker is worse than a missing one: the trade gets the wrong company's size and sector, and counts toward the wrong stock's rarity. So each OCR'd row's ticker is checked against [`company_tickers.json`](https://www.sec.gov/files/company_tickers.json) and [`company_tickers_mf.json`](https://www.sec.gov/files/company_tickers_mf.json) from the SEC, cached in `data/sec-symbols.json` and refreshed weekly (needs `SEC_USER_AGENT`). A ticker that drops off the SEC's list (delisted, acquired, renamed) stays in the cache as retired, so it still checks the trades made while it was listed; a name lookup only lands on a retired ticker when no current company has that name. Name lookups use a company's common stock, not a preferred share the SEC happens to list first (`ARES`, not `ARES.PRB`). Names are compared on their significant words, ignoring legal forms and security descriptions such as "Inc", "Common Stock" or "Sponsored ADR". The outcome is stored on the trade as `tickerCheck`, with the ticker as read in `ocrTicker`:
 
 | `tickerCheck` | Meaning | Ticker kept |
 |---|---|---|
@@ -26,19 +26,20 @@ A misread ticker is worse than a missing one: the trade gets the wrong company's
 | `corrected` | Unknown, or a company whose name doesn't match, while the filing's name matches exactly one listed company: `WMTD` became `WMT`, `VUZX` became `VUZI` | Replaced |
 | `found-by-name` | No ticker was read, and the name matches exactly one listed company, such as the "TYLER TECHNOLOGIES, INC." rows on broker statements | Added |
 | `manual` | Set by hand in `data/ticker-overrides.json` | As set |
+| `otc` | A foreign share traded over the counter: five letters ending in F (ordinary shares) or Y (ADRs), written in the asset name, such as "Tokyo Electron Ltd Ordinary Shares (TOELF)". The SEC doesn't list these | Yes |
 | `name-mismatch` | A listed company with a different name, kept because the filing writes the ticker in the asset name | Yes |
 | `rejected` | A listed company with a different name that the filing never writes, such as `GS` (Goldman Sachs) read off a municipal bond | Dropped |
-| `unknown-symbol` | Neither listed nor found by name. Often an OTC or foreign listing | Yes |
+| `unknown-symbol` | Neither listed nor found by name: a company that left the SEC's list before the cache saw it, a deregistered company, or a misread | Yes |
 
 Bonds, private funds and LLCs match nothing and keep no ticker. A name has to match exactly one company to be used, so an ambiguous name never picks one.
 
-Names are matched leniently but never guessed: the same words in any order ("SCHWAB CHARLES CORP"), initials joined ("U.S. BANCORP"), statement abbreviations expanded ("INTL", "HLDG", "COS"), and a name cut off at a statement's column width ("UNITEDHEALTH GROUP INCORPORATE") matched to the one company it starts. Bonds, notes and options ("4.329% 09/21/2028", "HYBRID", "LINKED TO") never take their issuer's stock ticker, and funds only match their exact name.
+Names are matched leniently but never guessed: accents dropped ("Mondelēz" is MONDELEZ), the same words in any order ("SCHWAB CHARLES CORP"), initials joined ("U.S. BANCORP"), statement abbreviations expanded ("INTL", "HLDG", "COS"), and a name cut off at a statement's column width ("UNITEDHEALTH GROUP INCORPORATE") matched to the one company it starts. Bonds, notes and options ("4.329% 09/21/2028", "HYBRID", "LINKED TO") never take their issuer's stock ticker, and funds only match their exact name.
 
 A filing's tickers are checked once, when it's read. After that they stay as they are, so a scheduled run never changes a confirmed ticker. To re-check the stored trades, after adding an override or changing the matching rules, run `ocr:check-tickers`: a dry run that lists what would change, then `--write` to save. Checks start from `ocrTicker`, so re-running always gives the same answer.
 
 ### Fixing a ticker by hand
 
-What the check can't settle (a misspelled name, a company the SEC no longer lists, a stock whose name matches several companies) is listed under "Data to check" at the foot of the report, in `attention` in `latest.json`, and at the end of the run log, with the fix. To set it, add the asset name exactly as the report shows it to `data/ticker-overrides.json`, with `""` for an asset that has no listed ticker:
+What the check can't settle (a misspelled name, a company the SEC no longer lists, a stock whose name matches several companies) is listed under "Data to check" at the foot of the report, in `attention` in `latest.json`, and at the end of the run log, with the fix. To set it, add the asset name exactly as the report shows it to `data/ticker-overrides.json`, with `""` for an asset that has no listed ticker. Keys ignore case, spacing and a trailing asset-type code, so `"Revity, Inc. Common Stock (RVTY) [ST]"` also covers the same name without `[ST]`:
 
 ```json
 {

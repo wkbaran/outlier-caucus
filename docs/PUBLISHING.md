@@ -122,9 +122,9 @@ docker compose -f docker/compose.yaml logs -f
 2. **Write `docker/.env` on the machine you deploy from** (it's gitignored). It holds the settings, including secrets, and where the state lives on the host:
 
    ```
-   STATE_DIR=/var/home/core/outlier-caucus
+   STATE_DIR=/srv/outlier-caucus
    OLLAMA_URL=http://<ollama-host>:11434
-   SEC_USER_AGENT=Your Name you@example.com
+   SEC_USER_AGENT=Your Name you@example.com   # also the contact in the House and Senate scrapers' User-Agent
    S3_BUCKET=...  AWS_REGION=...  CLOUDFRONT_DISTRIBUTION_ID=...  AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...   # one per line
    ```
 

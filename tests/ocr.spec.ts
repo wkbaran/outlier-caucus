@@ -30,6 +30,14 @@ test("amounts normalize from printed ranges, spaced digits, letters, and over-li
   expect(normalizeAmount(null)).toBeUndefined();
 });
 
+test("an exact amount with cents is kept as written, as electronic filings keep it", () => {
+  // Cash paid out for fractional shares after a spin-off (Carol Devine Miller, 10/30/2026)
+  expect(normalizeAmount("$710.52")).toBe("$710.52");
+  expect(normalizeAmount("$2722.50")).toBe("$2,722.50");
+  expect(normalizeAmount("$15.00")).toBe("$15.00");
+  expect(normalizeAmount("710.52")).toBeUndefined();
+});
+
 test("dates accept form styles and reject impossible or implausible ones", () => {
   expect(normalizeDate("03/16/2026", NOW)).toBe("2026-03-16");
   expect(normalizeDate("7/21/26", NOW)).toBe("2026-07-21");

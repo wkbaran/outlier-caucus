@@ -8,6 +8,7 @@
 
 import type { FMPTrade } from "../types/index.js";
 import type { TradeSourceProvider } from "./trade-source.js";
+import { userAgent } from "./government-provider.js";
 
 // Senate data is maintained in GitHub (community-maintained mirror of Senate eFD PTR filings)
 const SENATE_URL =
@@ -29,7 +30,6 @@ export class HouseDataUnavailableError extends Error {
   }
 }
 
-const USER_AGENT = "outlier-caucus/1.0 (bill.baran@gmail.com)";
 
 // ── Senate schema ──────────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ function isOnOrAfter(raw: string | undefined, since: Date): boolean {
 
 async function fetchJson<T>(url: string, allowedFailureCodes?: number[]): Promise<{ data: T; status: number }> {
   const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
+    headers: { "User-Agent": userAgent() },
   });
   if (!response.ok) {
     if (allowedFailureCodes?.includes(response.status)) {

@@ -101,9 +101,14 @@ export function normalizeAmount(raw: string | null | undefined): string | undefi
 
   // Lower bounds are printed as either "$1,001" or "$1,000"
   const match = RANGE_BOUNDS.find((b) => numbers[0] === b.low || numbers[0] === b.low - 1);
-  if (!match) return undefined;
-  if (numbers.length >= 2 && numbers[1] !== match.high) return undefined;
-  return match.range;
+  if (match && (numbers.length < 2 || numbers[1] === match.high)) return match.range;
+
+  // Some filers write the exact amount instead, e.g. "$710.52" for cash paid out for
+  // fractional shares. Electronic filings keep these as written, so OCR does too. Only
+  // with cents: a whole number that isn't a range bound is more likely a misread column.
+  const exact = text.match(/^\$\s?(\d{1,3}(?:,\d{3})*|\d+)(\.\d{2})$/);
+  if (exact) return `$${Number(exact[1].replace(/,/g, "")).toLocaleString("en-US")}${exact[2]}`;
+  return undefined;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

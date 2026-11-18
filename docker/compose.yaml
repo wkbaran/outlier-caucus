@@ -10,7 +10,7 @@
 #
 # STATE_DIR (docker/.env or shell) is where data/, reports/, output/, formatted-reports/ and
 # logs/ live. It defaults to the repo, so a local run shares the native install's cache. For a
-# remote host set it to an absolute path on that host, e.g. STATE_DIR=/var/home/core/outlier-caucus
+# remote host set it to an absolute path on that host, e.g. STATE_DIR=/srv/outlier-caucus
 name: outlier-caucus
 
 services:

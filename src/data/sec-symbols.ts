@@ -22,6 +22,8 @@ export interface SecCompany {
 interface CachedSymbols {
   companies: SecCompany[];
   funds: string[];
+  /** Tickers on an earlier list that have since dropped off (delisted, acquired, renamed) */
+  retired?: SecCompany[];
 }
 
 export interface SymbolDirectory {
@@ -41,6 +43,7 @@ export type TickerCheck =
   | "corrected"      // the read ticker was wrong or unknown; replaced by the one the name matches
   | "found-by-name"  // no ticker was read; found by the company name
   | "manual"         // set by hand in data/ticker-overrides.json
+  | "otc"            // a foreign share traded over the counter (5 letters ending F or Y), written on the filing; the SEC doesn't list these
   | "name-mismatch"  // a listed ticker for a differently named company, kept because the filing writes it
   | "rejected"       // a listed ticker for a differently named company that the filing never writes; dropped
   | "unknown-symbol"; // not a listed company or fund, and the name matched nothing
@@ -75,6 +78,9 @@ const NOISE_WORDS = [...NAME_NOISE];
  */
 export function nameTokens(text: string, joinLostApostrophe = false): string[] {
   const words = text
+    // "MONDELĒZ" is MONDELEZ, as the SEC writes it
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/\([^)]*\)|\[[^\]]*\]|\/[A-Z]{2,3}\/?/g, " ")
     .replace(/\bUSD\s?[\d.]+/g, " ")
@@ -118,22 +124,40 @@ export function namesMatch(asset: string, title: string): boolean {
   return a.every((w) => sb.has(w)) || b.every((w) => sa.has(w));
 }
 
-export function buildSymbolDirectory(companies: SecCompany[], funds: string[]): SymbolDirectory {
+// Preferred shares, warrants, units and rights: "ARES.PRB", "ICR-PA", "SKYD-WT", "XYZ-U"
+const NOT_COMMON_TICKER = /[.-](?:P[A-Z]?|PR[A-Z]?|WT|WS|U|UN|R|RT)$/;
+
+/**
+ * `retired` are tickers that have dropped off the SEC list since an earlier fetch. They
+ * still check a trade made while they were listed, but a name lookup only lands on one
+ * when no current company has that name.
+ */
+export function buildSymbolDirectory(companies: SecCompany[], funds: string[], retired: SecCompany[] = []): SymbolDirectory {
   const dir: SymbolDirectory = { companies: new Map(), funds: new Set(funds.map(secKey)), byName: new Map(), bySortedName: new Map() };
   const add = (index: Map<string, SecCompany[]>, name: string, company: SecCompany) => {
     const same = index.get(name) ?? [];
     if (!same.some((c) => c.cik === company.cik)) index.set(name, [...same, company]);
   };
-  for (const company of companies) {
-    const key = secKey(company.ticker);
-    if (dir.companies.has(key)) continue;
-    dir.companies.set(key, company);
-    const words = nameTokens(company.title);
-    if (!words.length) continue;
-    // The SEC lists a company's main ticker first (GOOGL before GOOG, BRK-B before BRK-A),
-    // so only the first ticker per company is kept for name lookups.
-    add(dir.byName, words.join(" "), company);
-    add(dir.bySortedName, [...words].sort().join(" "), company);
+  const currentNames = new Set<string>();
+  for (const [listed, isCurrent] of [[companies, true], [retired, false]] as const) {
+    // A name lookup should land on the common stock. The SEC sometimes lists a preferred
+    // share first (ARES.PRB before ARES), so those go after the company's other tickers.
+    const commonCiks = new Set(listed.filter((c) => !NOT_COMMON_TICKER.test(c.ticker)).map((c) => c.cik));
+    const list = [...listed.filter((c) => !NOT_COMMON_TICKER.test(c.ticker) || !commonCiks.has(c.cik)),
+      ...listed.filter((c) => NOT_COMMON_TICKER.test(c.ticker) && commonCiks.has(c.cik))];
+    for (const company of list) {
+      const key = secKey(company.ticker);
+      if (dir.companies.has(key)) continue;
+      dir.companies.set(key, company);
+      const words = nameTokens(company.title);
+      if (!words.length) continue;
+      const [name, sorted] = [words.join(" "), [...words].sort().join(" ")];
+      if (isCurrent) currentNames.add(name).add(`sorted:${sorted}`);
+      // The SEC lists a company's main ticker first (GOOGL before GOOG, BRK-B before BRK-A),
+      // so only the first ticker per company is kept for name lookups.
+      if (isCurrent || !currentNames.has(name)) add(dir.byName, name, company);
+      if (isCurrent || !currentNames.has(`sorted:${sorted}`)) add(dir.bySortedName, sorted, company);
+    }
   }
   return dir;
 }
@@ -213,7 +237,28 @@ export function checkTicker(
     return written ? { symbol: ticker, check: "name-mismatch" } : { check: "rejected" };
   }
   if (dir.funds.has(secKey(ticker))) return { symbol: ticker, check: "fund" };
-  return named ? { symbol: named.ticker, check: "corrected" } : { symbol: ticker, check: "unknown-symbol" };
+  if (named) return { symbol: named.ticker, check: "corrected" };
+  // "Tokyo Electron Ltd Ordinary Shares (TOELF)": over-the-counter symbols for foreign
+  // shares end in F (ordinary) or Y (ADR). Only trusted when the filing writes it out.
+  if (/^[A-Z]{4}[FY]$/.test(ticker.toUpperCase()) && asset.toUpperCase().includes(`(${ticker.toUpperCase()})`)) {
+    return { symbol: ticker, check: "otc" };
+  }
+  return { symbol: ticker, check: "unknown-symbol" };
+}
+
+/**
+ * A fresh SEC list, keeping what earlier lists had that this one dropped: a delisted or
+ * acquired company's ticker still checks the trades made while it was listed.
+ */
+export function mergeSymbolLists(previous: CachedSymbols | undefined, companies: SecCompany[], funds: string[]): CachedSymbols {
+  const current = new Set(companies.map((c) => secKey(c.ticker)));
+  const retired = new Map<string, SecCompany>();
+  for (const c of [...(previous?.retired ?? []), ...(previous?.companies ?? [])]) {
+    const key = secKey(c.ticker);
+    if (!current.has(key)) retired.set(key, c);
+  }
+  const allFunds = [...new Set([...funds, ...(previous?.funds ?? [])])];
+  return { companies, funds: allFunds, retired: [...retired.values()] };
 }
 
 async function secFetch(url: string, userAgent: string): Promise<unknown> {
@@ -234,7 +279,8 @@ export function loadSymbolDirectory(): Promise<SymbolDirectory | null> {
     const stored = await loadData<CachedSymbols>(CACHE_FILE);
     const fresh = stored?.fetchedAt && Date.now() - new Date(stored.fetchedAt).getTime() < CACHE_TTL_MS;
     const userAgent = process.env.SEC_USER_AGENT;
-    if (stored?.data && (fresh || !userAgent)) return buildSymbolDirectory(stored.data.companies, stored.data.funds);
+    const fromCache = (c: CachedSymbols) => buildSymbolDirectory(c.companies, c.funds, c.retired);
+    if (stored?.data && (fresh || !userAgent)) return fromCache(stored.data);
     if (!userAgent) {
       console.warn("⚠️  SEC_USER_AGENT is not set, so OCR'd tickers are not checked against the SEC symbol lists");
       return null;
@@ -244,12 +290,13 @@ export function loadSymbolDirectory(): Promise<SymbolDirectory | null> {
         .map((c) => ({ ticker: c.ticker.toUpperCase(), cik: c.cik_str, title: c.title }));
       const mf = await secFetch(FUNDS_URL, userAgent) as { fields: string[]; data: unknown[][] };
       const symbolAt = mf.fields.indexOf("symbol");
-      const funds = mf.data.map((row) => String(row[symbolAt] ?? "")).filter(Boolean);
-      await saveData(CACHE_FILE, { companies, funds });
-      return buildSymbolDirectory(companies, funds);
+      const fetched = mf.data.map((row) => String(row[symbolAt] ?? "")).filter(Boolean);
+      const merged = mergeSymbolLists(stored?.data, companies, fetched);
+      await saveData(CACHE_FILE, merged);
+      return fromCache(merged);
     } catch (err) {
       console.warn(`⚠️  Could not refresh the SEC symbol lists: ${(err as Error).message}`);
-      return stored?.data ? buildSymbolDirectory(stored.data.companies, stored.data.funds) : null;
+      return stored?.data ? fromCache(stored.data) : null;
     }
   })();
   return loaded;

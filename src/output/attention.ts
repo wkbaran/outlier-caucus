@@ -4,11 +4,12 @@ import type { FMPTrade } from "../types/index.js";
 import type { ReviewFiling } from "../data/government-provider.js";
 import { looksLikeListedStock } from "../data/sec-symbols.js";
 import { overrideKey, TICKER_OVERRIDES_FILE, type OcrFilingRecord } from "../ocr/ocr-filings.js";
+import type { FetchFailure } from "../data/fetch-status.js";
 
 // What a run could not resolve on its own, each with how to fix it for the next run.
 // Shown in the brief, at the foot of the report, and in the run log.
 
-export type AttentionKind = "ocr-failed" | "ocr-needs-review" | "ocr-pending" | "ticker-unresolved" | "ticker-checks-off";
+export type AttentionKind = "fetch-failed" | "ocr-failed" | "ocr-needs-review" | "ocr-pending" | "ticker-unresolved" | "ticker-checks-off";
 
 export interface AttentionItem {
   /** Stable while the problem stays the same; marking it reviewed hides it until it changes */
@@ -37,10 +38,12 @@ export interface AttentionInputs {
   tickerChecksOn: boolean;
   /** The report date, for the rebuild command */
   reportDate: string;
+  /** Chambers whose latest fetch failed (data/fetch-status.json) */
+  fetchFailures?: FetchFailure[];
 }
 
 const CLI = "node dist/index.js";
-const ORDER: AttentionKind[] = ["ticker-checks-off", "ocr-failed", "ocr-needs-review", "ocr-pending", "ticker-unresolved"];
+const ORDER: AttentionKind[] = ["fetch-failed", "ticker-checks-off", "ocr-failed", "ocr-needs-review", "ocr-pending", "ticker-unresolved"];
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function ocrFilingItems(inputs: AttentionInputs): AttentionItem[] {
@@ -78,6 +81,26 @@ function ocrFilingItems(inputs: AttentionInputs): AttentionItem[] {
     });
   }
   return items;
+}
+
+function fetchFailureItems(inputs: AttentionInputs): AttentionItem[] {
+  return (inputs.fetchFailures ?? []).map((f) => {
+    const name = f.chamber === "senate" ? "Senate" : "House";
+    const since = f.since.slice(0, 10);
+    return {
+      // The outage's start is part of the key, so marking one reviewed doesn't hide the next
+      key: `fetch-failed:${f.chamber}:${since}`,
+      kind: "fetch-failed" as const,
+      inThisReport: false, trades: null,
+      title: `${name} filings couldn't be fetched${f.failedRuns > 1 ? ` (${f.failedRuns} runs since ${since})` : ""}`,
+      detail: `The last fetch failed: ${f.error}. ${name} filings made since then are missing from this report. ` +
+        "The next fetch that works catches up from the newest stored trade.",
+      fix: [
+        `Check whether ${f.chamber === "senate" ? "https://efdsearch.senate.gov/search/" : "https://disclosures-clerk.house.gov/"} is up; outages there usually clear on their own.`,
+        `Fetch again and rebuild: \`${CLI} report:html --date ${inputs.reportDate} --publish\``,
+      ],
+    };
+  });
 }
 
 function pendingItem(inputs: AttentionInputs): AttentionItem[] {
@@ -144,12 +167,15 @@ export function buildAttention(inputs: AttentionInputs): AttentionItem[] {
       fix: ["Set `SEC_USER_AGENT` (a name and email the SEC can contact) and make sure www.sec.gov is reachable."],
     });
   }
-  items.push(...ocrFilingItems(inputs), ...pendingItem(inputs), ...tickerItems(inputs));
+  items.push(...fetchFailureItems(inputs), ...ocrFilingItems(inputs), ...pendingItem(inputs), ...tickerItems(inputs));
   for (const item of items) {
     item.fix.push(`If it's been looked into and needs nothing more, mark it reviewed: \`${CLI} attention:review "${item.key}" --note "<why>"\``);
   }
+  // A failed fetch leaves the whole report short, so it leads even over this report's items
+  const outage = (i: AttentionItem) => Number(i.kind === "fetch-failed");
   return items.sort((a, b) =>
-    Number(b.inThisReport) - Number(a.inThisReport)
+    outage(b) - outage(a)
+    || Number(b.inThisReport) - Number(a.inThisReport)
     || ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind)
     || (b.trades ?? 0) - (a.trades ?? 0));
 }
